@@ -210,8 +210,22 @@ section_minecraft_archives() {
     log "[8/8] Minecraft weekly archives (SSH bridge to KVM guest)"
 
     # Minecraft runs inside a KVM VM — its filesystem is opaque to this host.
-    # We reach it over SSH, discover instances, age-gate files to guard against
-    # copying archives still being compressed by the guest, then pull via rsync.
+    # This section is the host-side half of a two-part backup system:
+    #
+    #   Inside the VM:  minecraft-server-setup (github.com/LetsGaming/minecraft-server-setup)
+    #                   runs its own independent GFS backup rotation. It produces
+    #                   .tar.zst archives under:
+    #                     $BACKUPS_PATH/archives/weekly/minecraft_backup_*.tar.zst
+    #                   The schedule, retention, and paths are all configured in
+    #                   the MC setup's variables.json — PABS doesn't control any of that.
+    #
+    #   Here (host):    PABS SSHes in, finds whatever weekly archives are present,
+    #                   age-gates with -mmin to avoid in-progress files, then pulls
+    #                   them to local staging for inclusion in the USB backup.
+    #
+    # MINECRAFT_BASE (config.sh) should be the parent backups/ directory.
+    # The defaults match an unmodified minecraft-server-setup install — adjust
+    # if the user changed TARGET_DIR_NAME, INSTANCE_NAME, or BACKUPS_PATH.
 
     if [[ -z "$MC_VM_IP" ]]; then
         log_warn "MC_VM_IP not set in config.sh — skipping Minecraft archives."
@@ -223,7 +237,11 @@ section_minecraft_archives() {
         return 0
     fi
 
-    # Discover instance directories inside the VM; mapfile handles names with spaces
+    # MINECRAFT_BASE is the parent backups/ directory, e.g.:
+    #   /home/minecraft/minecraft-server/backups
+    # Each subdirectory is one INSTANCE_NAME, containing archives/weekly/.
+    # This matches minecraft-server-setup's BACKUPS_PATH per instance:
+    #   ~/TARGET_DIR_NAME/backups/INSTANCE_NAME
     mapfile -t instance_dirs < <(
         ssh "${SSH_OPTS[@]}" "$MC_VM_USER@$MC_VM_IP" \
             "find \"$MINECRAFT_BASE\" -mindepth 1 -maxdepth 1 -type d 2>/dev/null" \
@@ -231,7 +249,7 @@ section_minecraft_archives() {
     )
 
     if [[ ${#instance_dirs[@]} -eq 0 ]]; then
-        log_warn "No Minecraft instance directories found at $MINECRAFT_BASE inside VM."
+        log_warn "No instance directories found under $MINECRAFT_BASE inside VM."
         return 0
     fi
 
@@ -243,15 +261,20 @@ section_minecraft_archives() {
     for instance_dir in "${instance_dirs[@]}"; do
         local instance_name
         instance_name=$(basename "$instance_dir")
-        local weekly_dir="$instance_dir/backups/archives/weekly"
+        # minecraft-server-setup stores weekly archives at:
+        #   $BACKUPS_PATH/archives/weekly/minecraft_backup_YYYY-MM-DD_HH-MM-SS.tar.zst
+        local weekly_dir="$instance_dir/archives/weekly"
         local dest="$STAGE_DIR/minecraft/$instance_name"
 
         # Build the remote find command.
         # -mmin +N: only files untouched for at least MC_ARCHIVE_MIN_AGE_MINUTES.
         # This is the KVM-safe replacement for fuser: we cannot inspect file locks
         # across the hypervisor boundary, so mtime age-gating is the safeguard.
+        # Note: backup.sh already validates archives with `zstd -t` before finishing,
+        # so by the time a file is old enough to pass this check it is also
+        # structurally valid on the MC side.
         local find_cmd="find \"$weekly_dir\" -maxdepth 1 -type f"
-        find_cmd+=" \\( -name '*.tar.zst' -o -name '*.tar.gz' -o -name '*.zip' \\)"
+        find_cmd+=" \\( -name '*.tar.zst' -o -name '*.tar.gz' \\)"
         if [[ $MC_ARCHIVE_MIN_AGE_MINUTES -gt 0 ]]; then
             find_cmd+=" -mmin +${MC_ARCHIVE_MIN_AGE_MINUTES}"
         fi
@@ -262,7 +285,7 @@ section_minecraft_archives() {
         )
 
         if [[ ${#safe_files[@]} -eq 0 ]]; then
-            log_warn "$instance_name — no finalized archives found (still writing, or none exist)."
+            log_warn "$instance_name — no finalized weekly archives found (still writing, or none exist yet)."
             (( total_skipped++ )) || true
             continue
         fi
@@ -301,6 +324,6 @@ section_minecraft_archives() {
         fi
     done
 
-    $found_any || log_warn "No Minecraft instances had finalized weekly archives."
+    $found_any || log_warn "No instances had finalized weekly archives."
     log "  Minecraft: $total_copied copied, $total_skipped skipped, $total_failed failed"
 }

@@ -99,10 +99,36 @@ Add (runs every Sunday at 03:00):
 0 3 * * 0 /opt/pabs/backup.sh
 ```
 
-If Minecraft also runs a weekly backup, make sure it finishes before PABS
-starts. The default `MC_ARCHIVE_MIN_AGE_MINUTES=5` in `config.sh` provides
-a safety margin, but scheduling the host backup a couple of hours after the
-VM backup is the safest approach.
+### Minecraft integration
+
+PABS is designed to work in tandem with
+**[LetsGaming/minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup)**
+— an automated Minecraft server management system that handles server setup,
+mod updates, RCON, and its own GFS backup rotation inside the VM.
+
+The two systems are **fully independent.** `minecraft-server-setup` manages its own schedule, retention, and archive paths — all configured in its own `variables.json`. PABS doesn't know or care about that schedule. It simply SSHes into the VM, finds whatever weekly `.tar.zst`/`.tar.gz` archives are present, and pulls them to USB.
+
+| Layer | Tool | Responsibility |
+|---|---|---|
+| Inside the VM | `minecraft-server-setup` | Runs the server, manages mods, handles its own GFS backup rotation and retention |
+| Proxmox host | PABS | Pulls whatever weekly archives exist, offloads them to USB alongside all host-level config |
+
+**Path alignment:**
+
+The defaults in `config.sh` match an unmodified `minecraft-server-setup` install. If you changed `TARGET_DIR_NAME`, `INSTANCE_NAME`, `BACKUPS_PATH`, or the install user in `variables.json`, update `MINECRAFT_BASE` and `MC_VM_USER` in `config.sh` to match.
+
+With default `variables.json` values, `minecraft-server-setup` stores weekly archives at:
+```
+/home/minecraft/minecraft-server/backups/server/archives/weekly/
+```
+
+So `MINECRAFT_BASE` should be the parent `backups/` directory:
+```bash
+MINECRAFT_BASE="/home/minecraft/minecraft-server/backups"
+```
+PABS treats each subdirectory of `MINECRAFT_BASE` as one server instance and looks for `archives/weekly/` inside it — so multiple instances work automatically as long as they all live under the same parent.
+
+**Scheduling:** PABS and `minecraft-server-setup` run on independent schedules. Make sure a MC weekly backup has had time to finish before PABS runs. `MC_ARCHIVE_MIN_AGE_MINUTES` in `config.sh` provides a last-resort safety margin, but the safest approach is to schedule PABS several hours after whenever your MC backup typically fires.
 
 ---
 
@@ -160,7 +186,9 @@ sha256sum --check MANIFEST.sha256
 
 **Not backed up:**
 - VM and CT disk images — use Proxmox's built-in `vzdump` for those
-- Minecraft world data (only the weekly archive files created by your MC backup script)
+- Minecraft world data directly — PABS copies the weekly `.tar.zst` archives
+  produced by [minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup);
+  world data is whatever that tool chose to include in those archives
 
 ---
 

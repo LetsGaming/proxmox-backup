@@ -46,26 +46,51 @@ LOCAL_STAGE_WARN_GB=5
 # -----------------------------------------------------------------------------
 # MINECRAFT VM (KVM guest)
 # -----------------------------------------------------------------------------
-# Minecraft runs inside a KVM VM — its filesystem is opaque to the Proxmox
-# host. Archives are pulled over SSH from inside the guest.
+# PABS works in tandem with minecraft-server-setup running inside the VM:
+#   https://github.com/LetsGaming/minecraft-server-setup
+#
+# The two systems are fully independent — minecraft-server-setup runs its own
+# GFS backup rotation (hourly / daily / weekly / monthly) on whatever schedule
+# you configured in variables.json. PABS knows nothing about that schedule.
+# PABS simply SSHes into the VM, finds .tar.zst/.tar.gz files in the weekly
+# archive directory, and pulls the most recent ones to USB.
+#
+# The defaults below match the out-of-the-box minecraft-server-setup config.
+# If you changed TARGET_DIR_NAME, INSTANCE_NAME, BACKUPS_PATH, or the install
+# user in variables.json, update the variables here to match.
 
 # IP address of the Minecraft VM (must be reachable from the Proxmox host).
 # Leave empty to skip Minecraft backups entirely.
 MC_VM_IP=""
 
-# SSH user inside the VM (must have read access to MINECRAFT_BASE)
+# SSH user inside the VM — must have read access to MINECRAFT_BASE.
+# Default matches the recommended install user for minecraft-server-setup.
 MC_VM_USER="minecraft"
 
-# Path INSIDE the Minecraft VM where instance directories live
-MINECRAFT_BASE="/home/minecraft/minecraft-server/scripts"
+# Parent directory inside the VM that contains per-instance backup folders.
+# PABS treats each immediate subdirectory here as one server instance and
+# looks for archives/weekly/ inside it.
+#
+# With minecraft-server-setup's default variables.json this is:
+#   ~/TARGET_DIR_NAME/backups  →  /home/minecraft/minecraft-server/backups
+#
+# Each subdirectory corresponds to one INSTANCE_NAME, e.g.:
+#   /home/minecraft/minecraft-server/backups/server/archives/weekly/
+#
+# Adjust this if you set a custom BACKUPS_PATH or TARGET_DIR_NAME.
+MINECRAFT_BASE="/home/minecraft/minecraft-server/backups"
 
 # Only copy archives whose mtime is older than this many minutes.
-# Guards against copying a .tar.zst that the guest is still compressing.
-# The VM backup script takes up to ~2 min; 5 gives a comfortable margin.
-# Set to 0 to disable the age check (not recommended).
+# Guards against pulling a .tar.zst that the MC backup script is still
+# compressing. Age-gating is used because fuser cannot see file locks across
+# the KVM boundary. Increase this if your worlds are very large and
+# compression takes longer than the default margin.
+# Set to 0 to disable (not recommended).
 MC_ARCHIVE_MIN_AGE_MINUTES=5
 
-# How many weekly Minecraft archive files to keep per instance
+# How many of the most recent weekly archives to keep per instance on the USB.
+# This is independent of minecraft-server-setup's own MAX_WEEKLY_BACKUPS
+# setting — PABS applies its own retention on the USB side after pulling.
 KEEP_WEEKLY_ARCHIVES=4
 
 # SSH identity file for the Minecraft VM connection.
