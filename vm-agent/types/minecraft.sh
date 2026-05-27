@@ -68,20 +68,22 @@ _find_archives() {
     [[ -d "$dir" ]] || return 0
     [[ "$keep" -gt 0 ]] || return 0
 
-    local find_cmd="find \"$dir\" -maxdepth 1 -type f"
-    find_cmd+=" \\( -name '*.tar.zst' -o -name '*.tar.gz' \\)"
-
     # Age-gate: skip files still being written/compressed by MC backup script.
     # fuser/lsof would be ideal but are unreliable inside containers/VMs under
     # some configurations. mtime age-gating is the safe universal alternative.
+    local age_args=()
     if [[ "$MC_MIN_AGE_MINUTES" -gt 0 ]]; then
-        find_cmd+=" -mmin +${MC_MIN_AGE_MINUTES}"
+        age_args=( -mmin "+${MC_MIN_AGE_MINUTES}" )
     fi
 
-    # Sort by mtime ascending (oldest first), then take the last N (newest N)
-    find_cmd+=" -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -n $keep | awk '{print \$2}'"
-
-    eval "$find_cmd"
+    # Sort by mtime ascending (oldest first), then take the last N (newest N).
+    # Using -printf '%T@ %p\n' + sort-n + tail avoids eval entirely; $dir is
+    # passed as a direct argument so shell metacharacters in the path are safe.
+    find "$dir" -maxdepth 1 -type f \
+        \( -name '*.tar.zst' -o -name '*.tar.gz' \) \
+        "${age_args[@]}" \
+        -printf '%T@ %p\n' 2>/dev/null \
+        | sort -n | tail -n "$keep" | awk '{print $2}'
 }
 
 # -----------------------------------------------------------------------------

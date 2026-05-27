@@ -175,6 +175,7 @@ _backup_portainer() {
             log "  Found $stack_count Portainer stacks"
 
             # Write each stack's compose content to staging
+            export PABS_STAGE_DIR="$STAGE_DIR"
             echo "$stacks_json" | python3 - << 'PYEOF'
 import json, sys, os
 
@@ -193,7 +194,6 @@ for stack in data:
 
 print(f"Exported {len(data)} stacks")
 PYEOF
-            export PABS_STAGE_DIR="$STAGE_DIR"
             _notes+=("Portainer stacks exported via API to portainer-stacks/")
         else
             log_warn "  Portainer API returned no stacks (check PORTAINER_TOKEN and PORTAINER_URL)"
@@ -309,7 +309,7 @@ _backup_volumes() {
     while IFS= read -r vol; do
         # Skip if already handled above
         if [[ -n "${DOCKER_INCLUDE_VOLUMES:-}" ]]; then
-            if echo "$DOCKER_INCLUDE_VOLUMES" | grep -q "$vol"; then
+            if echo "$DOCKER_INCLUDE_VOLUMES" | grep -qw "$vol"; then
                 continue
             fi
         fi

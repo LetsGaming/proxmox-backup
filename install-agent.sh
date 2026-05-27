@@ -69,8 +69,8 @@ rrun "command -v python3 >/dev/null || apt-get install -y python3 >/dev/null 2>&
 # --- Copy agent files ---
 log "Copying agent files to $TARGET:$REMOTE_DIR ..."
 rrun "mkdir -p $REMOTE_DIR/types"
-rsync -a --delete "${SSH_OPTS[@]/#/-e ssh }" \
-    -e "ssh ${SSH_OPTS[*]}" \
+rsync -a --delete \
+    -e "ssh ${SSH_OPTS[*]@Q}" \
     "$AGENT_SOURCE/" "$TARGET:$REMOTE_DIR/"
 # Fix permissions
 rrun "chmod +x $REMOTE_DIR/agent.sh"

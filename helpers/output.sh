@@ -4,10 +4,9 @@
 #                 written into every completed backup folder on USB.
 #
 # NOTE: generate_restore_script() contains a large heredoc that IS the
-# restore script. Variables like $MC_VM_IP are intentionally expanded at
-# generation time (no single quotes on the heredoc delimiter) so the restore
-# script captures the network coordinates that were current at backup time.
-# The --mc-ip / --mc-user flags let you override them at restore time.
+# restore script. Variables are intentionally expanded at generation time
+# (no single quotes on the heredoc delimiter) so the generated script is
+# fully self-contained.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -19,11 +18,7 @@ generate_restore_script() {
 
     # Snapshot config values into local vars. These are expanded into the
     # heredoc below so the generated script is fully self-contained.
-    local snap_mc_ip="$MC_VM_IP"
-    local snap_mc_user="$MC_VM_USER"
-    local snap_mc_base="$MINECRAFT_BASE"
     local snap_version="$SCRIPT_VERSION"
-    local snap_age="$MC_ARCHIVE_MIN_AGE_MINUTES"
 
     cat > "$dest" << RESTORE_SCRIPT
 #!/bin/bash
@@ -36,11 +31,10 @@ generate_restore_script() {
 #
 # Usage:
 #   chmod +x proxmox-restore.sh
-#   ./proxmox-restore.sh [--dry-run] [--section SECTION] [--mc-ip IP] [--mc-user USER]
+#   ./proxmox-restore.sh [--dry-run] [--section SECTION]
 #
-# Sections: configs | vms | cron | firewall | ssh | packages | scripts | minecraft
+# Sections: configs | vms | cron | firewall | ssh | packages | scripts | vm-agents
 # With no arguments: all sections run with interactive prompts.
-# Override baked-in VM coordinates if the MC VM got a new IP: --mc-ip 10.0.0.5
 # =============================================================================
 
 set -euo pipefail
@@ -49,17 +43,10 @@ BACKUP_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 DRY_RUN=false
 ONLY_SECTION=""
 
-# Coordinates baked in at backup time — override with --mc-ip / --mc-user
-MC_VM_IP="${snap_mc_ip}"
-MC_VM_USER="${snap_mc_user}"
-MINECRAFT_BASE="${snap_mc_base}"
-
 while [[ \$# -gt 0 ]]; do
     case "\$1" in
         --dry-run)  DRY_RUN=true;         shift   ;;
         --section)  ONLY_SECTION="\$2";  shift 2 ;;
-        --mc-ip)    MC_VM_IP="\$2";      shift 2 ;;  # Override if VM got a new IP
-        --mc-user)  MC_VM_USER="\$2";    shift 2 ;;  # Override SSH user
         *)          echo "Unknown argument: \$1"; exit 1 ;;
     esac
 done
@@ -240,26 +227,41 @@ if [[ -z "\$ONLY_SECTION" || "\$ONLY_SECTION" == "scripts" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# minecraft — pushes archives back to the KVM guest over SSH
+# vm-agents — restore notes and bundle locations for each backed-up VM/CT
 # ---------------------------------------------------------------------------
-if [[ -z "\$ONLY_SECTION" || "\$ONLY_SECTION" == "minecraft" ]]; then
-    log "=== Minecraft archives ==="
-    if [[ ! -d "\$BACKUP_DIR/minecraft" ]]; then
-        log "No Minecraft archives in this backup."
-    elif [[ -z "\$MC_VM_IP" ]]; then
-        log "⚠  MC_VM_IP not set. Archives are at \$BACKUP_DIR/minecraft — restore manually."
+if [[ -z "\$ONLY_SECTION" || "\$ONLY_SECTION" == "vm-agents" ]]; then
+    log "=== VM / LXC agent bundles ==="
+
+    if [[ ! -d "\$BACKUP_DIR/vm-agents" ]]; then
+        log "No VM agent bundles in this backup."
     else
-        log "Instances in backup:"; ls "\$BACKUP_DIR/minecraft"
-        if confirm "Push Minecraft archives back to VM (\$MC_VM_USER@\$MC_VM_IP)?"; then
-            while IFS= read -r -d '' instance_backup_dir; do
-                local_instance="\$(basename "\$instance_backup_dir")"
-                remote_dest="\$MINECRAFT_BASE/\${local_instance}/backups/archives/weekly"
-                run ssh -o BatchMode=yes "\$MC_VM_USER@\$MC_VM_IP" "mkdir -p \"\$remote_dest\""
-                run rsync -a -e "ssh -o BatchMode=yes" \
-                    "\$instance_backup_dir/" "\$MC_VM_USER@\$MC_VM_IP:\$remote_dest/"
-                log "  ✓ \$local_instance restored to VM"
-            done < <(find "\$BACKUP_DIR/minecraft" -mindepth 1 -maxdepth 1 -type d -print0)
-        fi
+        log "Agent bundles found:"
+        for bundle_dir in "\$BACKUP_DIR/vm-agents"/*/; do
+            [[ -d "\$bundle_dir" ]] || continue
+            label="\$(basename "\$bundle_dir")"
+            bundle_file="\$(find "\$bundle_dir" -maxdepth 1 -name '*.tar.zst' | head -1)"
+            notes_file="\$bundle_dir/restore-notes.txt"
+
+            log ""
+            log "  ── \$label ──"
+
+            if [[ -f "\$notes_file" ]]; then
+                log "  Restore notes:"
+                sed 's/^/    /' "\$notes_file"
+            fi
+
+            if [[ -n "\$bundle_file" ]]; then
+                log "  Bundle: \$bundle_file"
+                log "  Inspect contents:  tar -tf \"\$bundle_file\""
+                log "  Extract to /tmp:   tar -C /tmp -xf \"\$bundle_file\""
+            else
+                log "  ⚠  No .tar.zst bundle found in \$bundle_dir"
+            fi
+        done
+
+        log ""
+        log "ℹ  Each bundle is self-contained. No PABS installation is required on the"
+        log "   recovery machine — just tar and the restore-notes.txt inside each bundle."
     fi
 fi
 
@@ -288,7 +290,9 @@ CONTENTS
   etc-pve.tar             — Snapshot of /etc/pve (pmxcfs); extract selectively
   vm-ct-definitions/      — qm config / pct config exports for all VMs and CTs
   system-state/           — Disk layout, package lists, kernel, ZFS info
-  minecraft/              — Minecraft weekly archive files (pulled from KVM guest via SSH)
+  vm-agents/              — Per-VM/CT agent bundles (Docker, HAOS, Minecraft, generic)
+                            Each subdirectory contains a .tar.zst bundle and a
+                            restore-notes.txt — no PABS required to restore.
   proxmox-restore.sh      — Interactive restore script (self-contained)
   MANIFEST.sha256         — SHA256 checksums of every file (verified pre-commit)
 
@@ -297,10 +301,14 @@ TO RESTORE
   chmod +x proxmox-restore.sh && ./proxmox-restore.sh
   (add --dry-run to preview; --section NAME for one section only)
 
-  Sections: configs | vms | cron | firewall | ssh | packages | scripts | minecraft
+  Sections: configs | vms | cron | firewall | ssh | packages | scripts | vm-agents
 
-  If the Minecraft VM got a new IP since this backup was taken:
-    ./proxmox-restore.sh --section minecraft --mc-ip 10.0.0.5
+TO RESTORE A VM AGENT BUNDLE
+-----------------------------
+  Each bundle under vm-agents/<label>/ is self-contained:
+    tar -tf vm-agents/<label>/<label>.tar.zst   # inspect contents
+    tar -C /tmp -xf vm-agents/<label>/<label>.tar.zst  # extract
+  Read restore-notes.txt inside the bundle for type-specific instructions.
 
 TO VERIFY INTEGRITY
 -------------------
@@ -316,9 +324,9 @@ IMPORTANT NOTES
     warnings, if any, indicate the cluster DB was written during the tar pass.
   - MANIFEST.sha256 was verified against local SSD staging BEFORE the USB
     write. A second check ran after transfer. Both results are in backup.log.
-  - Minecraft archives were pulled from the KVM guest via SSH. Only files with
-    mtime older than ${MC_ARCHIVE_MIN_AGE_MINUTES} minute(s) were copied (age-gate against
-    in-progress compression by the guest OS).
+  - vm-agents/ bundles may contain sensitive data (API tokens, SSH keys, secrets
+    in .env files). The USB stick should be stored securely; anyone with physical
+    access to it can read these files.
   - Package restore requires internet access for apt-get dselect-upgrade.
 EOF
 

@@ -16,7 +16,7 @@ log() {
 
 log_warn() {
     log "⚠  $*"
-    (( WARNINGS++ )) || true
+    : $(( WARNINGS++ ))
 }
 
 log_err() {

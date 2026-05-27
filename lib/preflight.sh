@@ -40,13 +40,15 @@ _estimate_backup_kb() {
             && needed_kb=$(( needed_kb + $(du -sk "$path" 2>/dev/null | cut -f1) ))
     done
 
-    # Estimate Minecraft archive size from inside the VM over SSH
-    if [[ -n "$MC_VM_IP" ]]; then
-        local mc_kb=0
-        mc_kb=$(ssh "${SSH_OPTS[@]}" "$MC_VM_USER@$MC_VM_IP" \
-            "du -sk \"$MINECRAFT_BASE\" 2>/dev/null | cut -f1" 2>/dev/null || echo 0)
-        needed_kb=$(( needed_kb + mc_kb ))
+    # VM agent bundles are pulled at runtime and not easily pre-estimated.
+    # Add a rough heuristic: 512MB per configured agent to account for HAOS
+    # snapshots and large Docker volume exports. The 20% margin in the callers
+    # is insufficient for agent-heavy setups, so over-estimate deliberately.
+    local agent_count=0
+    if [[ -n "${VM_AGENTS[*]:-}" ]]; then
+        agent_count=${#VM_AGENTS[@]}
     fi
+    needed_kb=$(( needed_kb + agent_count * 524288 ))  # 512MB per agent
 
     echo "$needed_kb"
 }

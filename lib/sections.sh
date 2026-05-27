@@ -203,14 +203,11 @@ section_custom_scripts() {
 }
 
 # -----------------------------------------------------------------------------
-# SECTION 8: (reserved — previously direct Minecraft SSH bridge)
-# Minecraft backups are handled by the VM agent in section 9.
+# SECTION 8: VM / LXC agent backups
+#
+# Minecraft backups are handled here via the VM agent — no separate section.
 # Add your Minecraft VM to VM_AGENTS in config.sh:
 #   "minecraft-vm  <ip>  minecraft  /opt/pabs-agent/agent.sh"
-# -----------------------------------------------------------------------------
-
-# -----------------------------------------------------------------------------
-# SECTION 8: VM / LXC agent backups
 # -----------------------------------------------------------------------------
 
 section_vm_agents() {

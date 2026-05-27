@@ -1,257 +1,92 @@
-# PABS VM Agent — Integration Guide
+# PABS Integration Guide
 
-This tells you exactly where to add each piece to your existing PABS files.
-No existing code needs to change — this is purely additive.
+## Adding a VM or LXC to the agent system
 
----
+PABS backs up VMs and containers by SSHing into each one, running a small
+agent script, and pulling the resulting bundle back to the Proxmox host. No
+extra software is required on the recovery machine — each bundle is
+self-contained with a `restore-notes.txt`.
 
-## File layout after integration
+### Step 1 — Install the agent on the VM
 
-```
-pabs/
-├── backup.sh              ← edit: add one line
-├── config.sh              ← edit: add VM_AGENTS block
-├── lib/
-│   ├── sections.sh        ← edit: add section_vm_agents() at the bottom
-│   └── ...                (unchanged)
-└── vm-agent/              ← new directory (copy as-is)
-    ├── agent.sh
-    └── types/
-        ├── docker.sh
-        ├── haos.sh
-        └── generic.sh
-
-install-agent.sh           ← run from Proxmox host to set up each VM
-```
-
----
-
-## Step 1 — Copy vm-agent/ into your pabs directory
+From the Proxmox host, run:
 
 ```bash
-cp -r vm-agent/ /opt/pabs/vm-agent/
-chmod +x /opt/pabs/vm-agent/agent.sh
-chmod +x /opt/pabs/install-agent.sh
+bash install-agent.sh <ip-or-hostname> <ssh-user>
 ```
 
----
+This copies `vm-agent/agent.sh` and the type handlers to
+`/opt/pabs-agent/` on the target machine and sets correct permissions.
 
-## Step 2 — Add the section function to lib/sections.sh
+### Step 2 — Verify the agent
 
-Open `lib/sections.sh` and paste `section_vm_agents()` from
-`pabs-integration.sh` at the **very bottom** of the file, after
-`section_minecraft_archives()`.
-
----
-
-## Step 3 — Call the new section from backup.sh
-
-Open `backup.sh` and find the block that calls all section_* functions.
-It will look something like:
+SSH into the VM and do a test run:
 
 ```bash
-section_proxmox_configs
-section_vm_ct_definitions
-section_cron_jobs
-section_firewall
-section_ssh_keys
-section_system_state
-section_custom_scripts
-section_minecraft_archives
+ssh <user>@<vm-ip> sudo /opt/pabs-agent/agent.sh --dry-run
 ```
 
-Add one line at the end:
+You should see the agent detect its type (docker / haos / minecraft / generic)
+and print what it would back up. Fix any errors before continuing.
 
-```bash
-section_vm_agents
-```
+### Step 3 — Add the VM to config.sh on the Proxmox host
 
-Also update the section counter comment if you have one (8/8 → 9/9).
-
----
-
-## Step 4 — Add the config block to config.sh
-
-Open `config.sh` and paste the `VM / LXC AGENT BACKUPS` block from
-`pabs-integration.sh` after the `MINECRAFT VM` section.
-
----
-
-## Step 5 — Set up each VM with the agent
-
-Run this from your Proxmox host for each VM or LXC you want to back up:
-
-```bash
-# Basic usage
-/opt/pabs/install-agent.sh root@192.168.1.10
-
-# With a specific SSH key
-/opt/pabs/install-agent.sh root@192.168.1.10 --key /root/.ssh/id_ed25519_pabs_agent
-
-# Custom install directory
-/opt/pabs/install-agent.sh root@192.168.1.10 --dir /usr/local/pabs-agent
-```
-
-`install-agent.sh` will:
-- Copy `vm-agent/` to the target
-- Run `agent.sh --install` (creates `/etc/pabs-agent/config`)
-- Print the `VM_AGENTS` line to add to `config.sh`
-
----
-
-## Step 6 — Edit /etc/pabs-agent/config on each VM
-
-After install, SSH into each VM and review its config:
-
-```bash
-nano /etc/pabs-agent/config
-```
-
-The defaults work for most setups, but you may want to set:
-
-**Docker VM (no manager):**
-```bash
-DOCKER_COMPOSE_DIR="/opt"        # if all your apps are under /opt
-```
-
-**Docker VM (Dockge):**
-```bash
-DOCKER_MANAGER="dockge"          # or leave as "auto" — it detects it
-DOCKGE_STACKS_DIR="/opt/stacks"  # default, only change if different
-```
-
-**Docker VM (Portainer with API export):**
-```bash
-DOCKER_MANAGER="portainer"
-PORTAINER_URL="http://localhost:9000"
-PORTAINER_TOKEN="ptr_xxxxxxxxxxxx"
-```
-
-**HAOS:**
-```bash
-HAOS_BACKUP_TYPE="full"          # default — covers everything
-HAOS_KEEP_ON_HOST=1              # keep 1 pabs-* snapshot on the HA host
-```
-
-**Generic LXC (Pi-hole example):**
-```bash
-# /etc is already backed up automatically.
-# Pi-hole's data is in /etc/pihole — already covered.
-# Only needed if you have data outside /etc:
-# EXTRA_PATHS="/opt/pihole-extra"
-```
-
----
-
-## Step 7 — Add VMs to config.sh
-
-Open `/opt/pabs/config.sh` and fill in `VM_AGENTS`:
+Open `config.sh` and add an entry to the `VM_AGENTS` array:
 
 ```bash
 VM_AGENTS=(
-    "docker-vm    192.168.1.10   root    /opt/pabs-agent/agent.sh"
-    "haos         192.168.1.20   root    /opt/pabs-agent/agent.sh"
-    "pihole-lxc   192.168.1.30   root    /opt/pabs-agent/agent.sh"
+    # Format: "label  ip-or-hostname  ssh-user  agent-path"
+    "homeassistant  10.0.0.10  root    /opt/pabs-agent/agent.sh"
+    "minecraft-vm   10.0.0.11  mcuser  /opt/pabs-agent/agent.sh"
+    "docker-host    10.0.0.12  ubuntu  /opt/pabs-agent/agent.sh"
 )
 ```
 
-Optionally set a shared SSH key (recommended):
+The label is used as the directory name under `vm-agents/` in each backup.
+
+### Step 4 — Run PABS and confirm
 
 ```bash
-VM_SSH_KEY="/root/.ssh/id_ed25519_pabs_agent"
+sudo bash backup.sh
 ```
+
+After completion, check that `vm-agents/<label>/<label>.tar.zst` exists on
+the USB stick and that `README.txt` lists the `vm-agents/` directory.
 
 ---
 
-## Step 8 — Test
+## Type-specific configuration
 
-```bash
-# Test a single VM agent manually
-ssh root@192.168.1.10 /opt/pabs-agent/agent.sh --bundle-output /tmp/test-bundle.tar.zst
-ls -lh /tmp/test-bundle.tar.zst   # check size looks right
+Each agent type has config variables you can set in the agent's environment
+(via `/etc/pabs-agent/config` on the VM, created by `install-agent.sh`):
 
-# Run a full PABS backup
-/opt/pabs/backup.sh
+| Type      | Key variables                                                             |
+|-----------|---------------------------------------------------------------------------|
+| docker    | `DOCKER_MANAGER`, `PORTAINER_TOKEN`, `PORTAINER_URL`, `DOCKER_VOLUME_MAX_MB` |
+| haos      | `HAOS_WAIT_SECONDS`, `HAOS_KEEP_SNAPSHOTS`                               |
+| minecraft | `MC_INSTANCES_DIR`, `MC_KEEP_WEEKLY`, `MC_KEEP_DAILY`, `MC_MIN_AGE_MINUTES` |
+| generic   | `GENERIC_PATHS`, `GENERIC_EXCLUDE_PATHS`                                  |
 
-# Check the result
-ls /mnt/backup-usb/proxmox-backup/
-# You should see vm-agents/ alongside the host config files
-```
-
----
-
-## What ends up on the USB
-
-```
-proxmox-backup/
-└── 2025-06-01_03-00/
-    ├── etc-pve.tar
-    ├── vm-ct-definitions/
-    ├── ...                          ← existing host backups
-    ├── vm-agents/
-    │   ├── docker-vm/
-    │   │   └── pabs-bundle-docker-vm-2025-06-01_03-00.tar.zst
-    │   ├── haos/
-    │   │   └── pabs-bundle-haos-2025-06-01_03-00.tar.zst
-    │   └── pihole-lxc/
-    │       └── pabs-bundle-pihole-lxc-2025-06-01_03-00.tar.zst
-    ├── proxmox-restore.sh
-    └── MANIFEST.sha256
-```
-
-Each `.tar.zst` bundle is self-contained and includes a `restore-notes.txt`
-explaining exactly how to restore that specific VM type.
-
-To inspect a bundle:
-```bash
-# List contents
-zstd -d pabs-bundle-docker-vm-*.tar.zst --stdout | tar -t
-
-# Extract restore notes only
-zstd -d pabs-bundle-docker-vm-*.tar.zst --stdout | tar -x --to-stdout restore-notes.txt
-
-# Extract everything
-mkdir restore && zstd -d pabs-bundle-docker-vm-*.tar.zst --stdout | tar -x -C restore/
-```
+See the comments at the top of each `vm-agent/types/<type>.sh` for full
+documentation.
 
 ---
 
-## SSH key setup (recommended)
+## SSH host key setup
 
-Generate a dedicated key on the Proxmox host so you're not depending on root's
-default key for these connections:
+On the first connection to each VM, PABS uses `StrictHostKeyChecking=accept-new`
+so it can run unattended without pre-populating `known_hosts`. This means the
+**first connection provides no MITM protection**.
 
-```bash
-ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519_pabs_agent -N ""
+After initial setup, harden this:
 
-# Copy to each VM
-for vm_ip in 192.168.1.10 192.168.1.20 192.168.1.30; do
-    ssh-copy-id -i /root/.ssh/id_ed25519_pabs_agent.pub root@$vm_ip
-done
-
-# Add to config.sh
-# VM_SSH_KEY="/root/.ssh/id_ed25519_pabs_agent"
-```
-
----
-
-## HAOS notes
-
-The SSH community add-on gives you a shell inside a container, not on the
-HAOS host itself. The agent runs there and calls `ha backup new` which goes
-through the Supervisor — this is the correct, officially supported way to
-create HAOS backups programmatically.
-
-The resulting `.tar` file is a native HAOS snapshot. Restore it via:
-- HA web UI: Settings → Backups → Upload backup
-- CLI: `ha backup restore <slug>`
-
-The snapshot can be 500MB+ for a full backup with many add-ons. On a slow
-USB stick this will take longer to write. The HAOS handler already handles this
-gracefully — it streams the file into the bundle and lets PABS's normal
-staging-then-write pipeline deal with USB transfer.
-
-If the HAOS snapshot is too large and you want to keep USB usage down, set:
-```bash
-VM_AGENT_KEEP_BUNDLES=1    # in config.sh — keeps only the latest snapshot per VM
-```
+1. Verify each VM's host key fingerprint:
+   ```bash
+   ssh-keyscan <vm-ip> | ssh-keygen -lf -
+   ```
+2. Add the verified key to root's `known_hosts` on the Proxmox host:
+   ```bash
+   ssh-keyscan <vm-ip> >> /root/.ssh/known_hosts
+   ```
+3. Change `StrictHostKeyChecking=accept-new` to `StrictHostKeyChecking=yes`
+   in `VM_AGENT_SSH_OPTS` in `config.sh`.
