@@ -203,127 +203,123 @@ section_custom_scripts() {
 }
 
 # -----------------------------------------------------------------------------
-# SECTION 8: Minecraft weekly archives (SSH bridge to KVM guest)
+# SECTION 8: (reserved — previously direct Minecraft SSH bridge)
+# Minecraft backups are handled by the VM agent in section 9.
+# Add your Minecraft VM to VM_AGENTS in config.sh:
+#   "minecraft-vm  <ip>  minecraft  /opt/pabs-agent/agent.sh"
 # -----------------------------------------------------------------------------
 
-section_minecraft_archives() {
-    log "[8/8] Minecraft weekly archives (SSH bridge to KVM guest)"
+# -----------------------------------------------------------------------------
+# SECTION 8: VM / LXC agent backups
+# -----------------------------------------------------------------------------
 
-    # Minecraft runs inside a KVM VM — its filesystem is opaque to this host.
-    # This section is the host-side half of a two-part backup system:
-    #
-    #   Inside the VM:  minecraft-server-setup (github.com/LetsGaming/minecraft-server-setup)
-    #                   runs its own independent GFS backup rotation. It produces
-    #                   .tar.zst archives under:
-    #                     $BACKUPS_PATH/archives/weekly/minecraft_backup_*.tar.zst
-    #                   The schedule, retention, and paths are all configured in
-    #                   the MC setup's variables.json — PABS doesn't control any of that.
-    #
-    #   Here (host):    PABS SSHes in, finds whatever weekly archives are present,
-    #                   age-gates with -mmin to avoid in-progress files, then pulls
-    #                   them to local staging for inclusion in the USB backup.
-    #
-    # MINECRAFT_BASE (config.sh) should be the parent backups/ directory.
-    # The defaults match an unmodified minecraft-server-setup install — adjust
-    # if the user changed TARGET_DIR_NAME, INSTANCE_NAME, or BACKUPS_PATH.
+section_vm_agents() {
+    log "[8/8] VM agent backups"
 
-    if [[ -z "$MC_VM_IP" ]]; then
-        log_warn "MC_VM_IP not set in config.sh — skipping Minecraft archives."
-        return 0
+    # VM_AGENTS is defined in config.sh as an array of strings, one per VM/LXC.
+    # Each entry format: "label  ip-or-hostname  ssh-user  agent-path"
+    #   label       — short name used for the backup subfolder and log output
+    #   ip/host     — address reachable from this Proxmox host
+    #   ssh-user    — user to SSH in as (must have read access + can run agent.sh)
+    #   agent-path  — full path to agent.sh on the remote host
+
+    if [[ ${#VM_AGENTS[@]} -eq 0 ]]; then
+        log "  No VM_AGENTS configured — skipping"
+        return
     fi
 
-    if ! ssh "${SSH_OPTS[@]}" "$MC_VM_USER@$MC_VM_IP" "exit" 2>/dev/null; then
-        log_warn "Cannot connect to Minecraft VM at $MC_VM_IP (user: $MC_VM_USER). Skipping."
-        return 0
-    fi
+    local total_ok=0
+    local total_fail=0
+    local total_skip=0
 
-    # MINECRAFT_BASE is the parent backups/ directory, e.g.:
-    #   /home/minecraft/minecraft-server/backups
-    # Each subdirectory is one INSTANCE_NAME, containing archives/weekly/.
-    # This matches minecraft-server-setup's BACKUPS_PATH per instance:
-    #   ~/TARGET_DIR_NAME/backups/INSTANCE_NAME
-    mapfile -t instance_dirs < <(
-        ssh "${SSH_OPTS[@]}" "$MC_VM_USER@$MC_VM_IP" \
-            "find \"$MINECRAFT_BASE\" -mindepth 1 -maxdepth 1 -type d 2>/dev/null" \
-            2>/dev/null || true
-    )
+    for entry in "${VM_AGENTS[@]}"; do
+        # Parse the 4 fields — tolerates multiple spaces/tabs as delimiter
+        read -r label vm_host ssh_user agent_path <<< "$entry"
 
-    if [[ ${#instance_dirs[@]} -eq 0 ]]; then
-        log_warn "No instance directories found under $MINECRAFT_BASE inside VM."
-        return 0
-    fi
-
-    local total_copied=0
-    local total_skipped=0
-    local total_failed=0
-    local found_any=false
-
-    for instance_dir in "${instance_dirs[@]}"; do
-        local instance_name
-        instance_name=$(basename "$instance_dir")
-        # minecraft-server-setup stores weekly archives at:
-        #   $BACKUPS_PATH/archives/weekly/minecraft_backup_YYYY-MM-DD_HH-MM-SS.tar.zst
-        local weekly_dir="$instance_dir/archives/weekly"
-        local dest="$STAGE_DIR/minecraft/$instance_name"
-
-        # Build the remote find command.
-        # -mmin +N: only files untouched for at least MC_ARCHIVE_MIN_AGE_MINUTES.
-        # This is the KVM-safe replacement for fuser: we cannot inspect file locks
-        # across the hypervisor boundary, so mtime age-gating is the safeguard.
-        # Note: backup.sh already validates archives with `zstd -t` before finishing,
-        # so by the time a file is old enough to pass this check it is also
-        # structurally valid on the MC side.
-        local find_cmd="find \"$weekly_dir\" -maxdepth 1 -type f"
-        find_cmd+=" \\( -name '*.tar.zst' -o -name '*.tar.gz' \\)"
-        if [[ $MC_ARCHIVE_MIN_AGE_MINUTES -gt 0 ]]; then
-            find_cmd+=" -mmin +${MC_ARCHIVE_MIN_AGE_MINUTES}"
-        fi
-        find_cmd+=" 2>/dev/null | sort | tail -n $KEEP_WEEKLY_ARCHIVES"
-
-        mapfile -t safe_files < <(
-            ssh "${SSH_OPTS[@]}" "$MC_VM_USER@$MC_VM_IP" "$find_cmd" 2>/dev/null || true
-        )
-
-        if [[ ${#safe_files[@]} -eq 0 ]]; then
-            log_warn "$instance_name — no finalized weekly archives found (still writing, or none exist yet)."
-            (( total_skipped++ )) || true
+        if [[ -z "$label" || -z "$vm_host" || -z "$ssh_user" || -z "$agent_path" ]]; then
+            log_warn "  Skipping malformed VM_AGENTS entry: '$entry'"
+            log_warn "  Expected: \"label  ip-or-hostname  ssh-user  /path/to/agent.sh\""
+            (( total_skip++ )) || true
             continue
         fi
 
-        mkdir -p "$dest"
-        found_any=true
-        log "  Instance: $instance_name (${#safe_files[@]} archive(s) ready)"
+        log "  [$label] $ssh_user@$vm_host"
 
-        for remote_file in "${safe_files[@]}"; do
-            [[ -z "$remote_file" ]] && continue
-            local fname
-            fname=$(basename "$remote_file")
+        # Build SSH options for this VM.
+        # Per-VM key: VM_SSH_KEY_<label> (dashes → underscores) takes precedence.
+        # Falls back to shared VM_SSH_KEY, then to the host's default key.
+        local ssh_opts=("${VM_AGENT_SSH_OPTS[@]}")
+        local key_var="VM_SSH_KEY_${label//-/_}"
+        if [[ -n "${!key_var:-}" ]]; then
+            ssh_opts+=(-i "${!key_var}")
+        elif [[ -n "${VM_SSH_KEY:-}" ]]; then
+            ssh_opts+=(-i "$VM_SSH_KEY")
+        fi
 
-            if rsync -a -e "ssh ${SSH_OPTS[*]}" \
-                    "$MC_VM_USER@$MC_VM_IP:$remote_file" "$dest/" 2>>"$LOG"; then
-                log "    ✓ $fname"
-                (( total_copied++ )) || true
-            else
-                log_err "    rsync failed: $fname"
-                (( total_failed++ )) || true
-            fi
-        done
+        # Check connectivity before attempting the backup
+        if ! ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" exit 2>/dev/null; then
+            log_err "  [$label] Cannot connect to $vm_host — skipping"
+            (( total_fail++ )) || true
+            continue
+        fi
 
-        # Prune local staging to KEEP_WEEKLY_ARCHIVES.
-        # Sort by mtime (Unix epoch, oldest first) so pruning is independent of
-        # filename conventions — we always remove the genuinely oldest files.
-        mapfile -t local_files < <(
-            find "$dest" -maxdepth 1 -type f -printf '%T@ %p\n' | sort -n | awk '{print $2}'
+        # Temporary bundle path on the remote host's /tmp
+        local remote_bundle="/tmp/pabs-bundle-${label}-${DATE}.tar.zst"
+
+        # Local destination inside the staging tree
+        local local_dest="$STAGE_DIR/vm-agents/$label"
+        mkdir -p "$local_dest"
+
+        # Step 1: Run the agent on the remote host
+        log "    Running agent on $vm_host..."
+        if ! ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
+                "$agent_path --bundle-output $remote_bundle" 2>>"$LOG"; then
+            log_err "  [$label] Agent failed on $vm_host"
+            (( total_fail++ )) || true
+            # Clean up any partial bundle left on the remote
+            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
+                "rm -f $remote_bundle" 2>/dev/null || true
+            continue
+        fi
+
+        # Step 2: Rsync the bundle back to local staging
+        log "    Pulling bundle from $vm_host..."
+        if rsync -a -e "ssh ${ssh_opts[*]}" \
+                "$ssh_user@$vm_host:$remote_bundle" "$local_dest/" 2>>"$LOG"; then
+            local size_kb
+            size_kb=$(du -sk "$local_dest/$(basename "$remote_bundle")" 2>/dev/null | cut -f1)
+            log "  ✓ [$label] bundle pulled (${size_kb}KB)"
+            (( total_ok++ )) || true
+        else
+            log_err "  [$label] rsync of bundle failed"
+            (( total_fail++ )) || true
+        fi
+
+        # Step 3: Remove the temporary bundle from the remote host
+        ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
+            "rm -f $remote_bundle" 2>/dev/null || true
+
+        # Step 4: Prune old bundles for this VM on USB (enforces VM_AGENT_KEEP_BUNDLES)
+        # Note: this runs against STAGE_DIR (local SSD) — USB rotation happens
+        # via the normal rotate_old_backups() which operates on whole backup dirs.
+        # Per-VM bundle retention within a single backup dir is handled here.
+        local keep="${VM_AGENT_KEEP_BUNDLES:-2}"
+        mapfile -t existing_bundles < <(
+            find "$local_dest" -maxdepth 1 -type f -name "*.tar.zst" \
+                -printf '%T@ %p\n' | sort -n | awk '{print $2}'
         )
-        if [[ ${#local_files[@]} -gt $KEEP_WEEKLY_ARCHIVES ]]; then
-            local excess=$(( ${#local_files[@]} - KEEP_WEEKLY_ARCHIVES ))
+        if [[ ${#existing_bundles[@]} -gt $keep ]]; then
+            local excess=$(( ${#existing_bundles[@]} - keep ))
             for (( i=0; i<excess; i++ )); do
-                rm -f "${local_files[$i]}"
-                log "    pruned: $(basename "${local_files[$i]}")"
+                rm -f "${existing_bundles[$i]}"
+                log "    pruned old bundle: $(basename "${existing_bundles[$i]}")"
             done
         fi
     done
 
-    $found_any || log_warn "No instances had finalized weekly archives."
-    log "  Minecraft: $total_copied copied, $total_skipped skipped, $total_failed failed"
+    log "  VM agents: $total_ok OK, $total_fail failed, $total_skip skipped"
+
+    if [[ $total_fail -gt 0 ]]; then
+        log_err "  $total_fail VM agent(s) failed — see log for details"
+    fi
 }

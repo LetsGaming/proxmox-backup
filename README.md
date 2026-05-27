@@ -10,14 +10,23 @@ stick. Designed to be power-loss safe and restore-ready out of the box.
 
 ```
 pabs/
-├── backup.sh          Entry point — run this (or schedule it in cron)
-├── config.sh          Your configuration — the only file you need to edit
-└── lib/
-    ├── core.sh        Logging, lock management, trap, and notifications
-    ├── preflight.sh   Pre-flight validation (USB, space checks)
-    ├── sections.sh    The 8 backup sections and their helper functions
-    ├── manifest.sh    SHA256 manifest generation/verification and rotation
-    └── output.sh      Generates the restore script and README in each backup
+├── backup.sh              Entry point — run this (or schedule it in cron)
+├── config.sh              Your configuration — the only file you need to edit
+├── install-agent.sh       One-time setup: deploys the VM agent to a VM over SSH
+├── INTEGRATION.md         Step-by-step guide for adding VM agent support
+├── lib/
+│   ├── core.sh            Logging, lock management, trap, and notifications
+│   ├── preflight.sh       Pre-flight validation (USB, space checks)
+│   ├── sections.sh        The 8 backup sections and their helper functions
+│   ├── manifest.sh        SHA256 manifest generation/verification and rotation
+│   └── output.sh          Generates the restore script and README in each backup
+└── vm-agent/              Agent deployed to each VM/LXC for lightweight backups
+    ├── agent.sh           Entry point — called by PABS over SSH
+    └── types/
+        ├── docker.sh      Docker VMs (with or without a manager like Dockge/Portainer)
+        ├── haos.sh        Home Assistant OS (triggers native HA snapshot)
+        ├── minecraft.sh   Minecraft VMs (works with minecraft-server-setup)
+        └── generic.sh     All other VMs and LXCs (Pi-hole, AdGuard, plain Debian, etc.)
 ```
 
 Every completed backup on the USB also contains a self-contained
@@ -45,26 +54,51 @@ Open `config.sh` and fill in:
 |---|---|
 | `USB_MOUNT` | Mount point of your USB stick |
 | `TARGET_UUID` | UUID of the USB partition (`blkid /dev/sdX1`) |
-| `MC_VM_IP` | IP of the Minecraft KVM guest (leave empty to skip) |
+| `VM_AGENTS` | List of VMs/LXCs to back up via the agent (leave empty to skip) |
+| `VM_SSH_KEY` | Shared SSH key for VM agent connections (leave empty for default) |
 | `DISCORD_WEBHOOK` | Discord webhook URL for alerts (leave empty to disable) |
 | `NOTIFY_EMAIL` | Fallback email for failure alerts (leave empty to disable) |
 
 Everything else has sensible defaults.
 
-### 3. Set up passwordless SSH to the Minecraft VM
+### 3. Set up VM agent backups (optional)
 
-The script connects to the Minecraft VM as `MC_VM_USER` to pull archives.
-Root on the Proxmox host needs an SSH key that the VM trusts:
+PABS can back up your VMs and LXCs with a lightweight agent — collecting only
+what's needed to restore each one, not full disk images. Supported types:
+
+| VM type | What gets backed up |
+|---|---|
+| **Docker VM** | All `docker-compose.yml` + `.env` files, Docker daemon config, package list. Works with or without a manager (Dockge, Portainer). |
+| **Home Assistant OS** | Full native HA snapshot (`.tar`) via the `ha` CLI — one-click restore via the HA UI. |
+| **Generic LXC / VM** | `/etc` (full), cron jobs, scripts, package list. Covers Pi-hole, AdGuard, Nginx, and any plain Debian/Ubuntu service. |
+
+**Deploy the agent to each VM:**
 
 ```bash
-# Generate a dedicated backup key (recommended)
-ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519_mc_backup -N ""
+# From the Proxmox host — run once per VM/LXC
+chmod +x /opt/pabs/install-agent.sh
+/opt/pabs/install-agent.sh root@<vm-ip>
 
-# Copy the public key to the VM
-ssh-copy-id -i /root/.ssh/id_ed25519_mc_backup.pub minecraft@<MC_VM_IP>
-
-# Set MC_SSH_KEY="/root/.ssh/id_ed25519_mc_backup" in config.sh
+# With a dedicated SSH key (recommended)
+/opt/pabs/install-agent.sh root@<vm-ip> --key /root/.ssh/id_ed25519_pabs_agent
 ```
+
+This copies `vm-agent/` to the VM, installs dependencies, and prints the
+`VM_AGENTS` line to add to `config.sh`. Then review `/etc/pabs-agent/config`
+on the VM to adjust any type-specific settings.
+
+**Add VMs to config.sh:**
+
+```bash
+VM_AGENTS=(
+    "docker-vm    192.168.1.10   root    /opt/pabs-agent/agent.sh"
+    "haos         192.168.1.20   root    /opt/pabs-agent/agent.sh"
+    "pihole-lxc   192.168.1.30   root    /opt/pabs-agent/agent.sh"
+)
+```
+
+See `INTEGRATION.md` for the full setup guide, all configuration options,
+and how to integrate the new section into the existing PABS scripts.
 
 ### 4. Mount your USB stick
 
@@ -101,34 +135,36 @@ Add (runs every Sunday at 03:00):
 
 ### Minecraft integration
 
-PABS is designed to work in tandem with
-**[LetsGaming/minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup)**
-— an automated Minecraft server management system that handles server setup,
-mod updates, RCON, and its own GFS backup rotation inside the VM.
+PABS backs up Minecraft via the VM agent (type=`minecraft`), designed to work
+in tandem with **[LetsGaming/minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup)**.
 
-The two systems are **fully independent.** `minecraft-server-setup` manages its own schedule, retention, and archive paths — all configured in its own `variables.json`. PABS doesn't know or care about that schedule. It simply SSHes into the VM, finds whatever weekly `.tar.zst`/`.tar.gz` archives are present, and pulls them to USB.
+Deploy the agent to the Minecraft VM the same way as any other VM:
 
-| Layer | Tool | Responsibility |
-|---|---|---|
-| Inside the VM | `minecraft-server-setup` | Runs the server, manages mods, handles its own GFS backup rotation and retention |
-| Proxmox host | PABS | Pulls whatever weekly archives exist, offloads them to USB alongside all host-level config |
-
-**Path alignment:**
-
-The defaults in `config.sh` match an unmodified `minecraft-server-setup` install. If you changed `TARGET_DIR_NAME`, `INSTANCE_NAME`, `BACKUPS_PATH`, or the install user in `variables.json`, update `MINECRAFT_BASE` and `MC_VM_USER` in `config.sh` to match.
-
-With default `variables.json` values, `minecraft-server-setup` stores weekly archives at:
-```
-/home/minecraft/minecraft-server/backups/server/archives/weekly/
-```
-
-So `MINECRAFT_BASE` should be the parent `backups/` directory:
 ```bash
-MINECRAFT_BASE="/home/minecraft/minecraft-server/backups"
+./install-agent.sh root@<mc-vm-ip>
 ```
-PABS treats each subdirectory of `MINECRAFT_BASE` as one server instance and looks for `archives/weekly/` inside it — so multiple instances work automatically as long as they all live under the same parent.
 
-**Scheduling:** PABS and `minecraft-server-setup` run on independent schedules. Make sure a MC weekly backup has had time to finish before PABS runs. `MC_ARCHIVE_MIN_AGE_MINUTES` in `config.sh` provides a last-resort safety margin, but the safest approach is to schedule PABS several hours after whenever your MC backup typically fires.
+Then add it to `VM_AGENTS` in `config.sh`:
+
+```bash
+VM_AGENTS=(
+    "minecraft-vm  192.168.1.40  minecraft  /opt/pabs-agent/agent.sh"
+)
+```
+
+The agent auto-detects the type as `minecraft` (looks for the `minecraft` system
+user and the default `minecraft-server-setup` directory layout). It backs up:
+
+- Weekly `.tar.zst` archives produced by `minecraft-server-setup` (age-gated to
+  avoid in-progress files)
+- `server.properties`, `ops.json`, `whitelist.json`, `banned-*.json`
+- `mods/` and `plugins/` directories
+- Optionally daily archives (set `MC_KEEP_DAILY` in `/etc/pabs-agent/config`)
+
+All options (`MINECRAFT_BASE`, keep counts, age-gate, daily archives) are
+configured in `/etc/pabs-agent/config` on the Minecraft VM itself — the
+defaults match an unmodified `minecraft-server-setup` install without any
+changes needed.
 
 ---
 
@@ -159,6 +195,28 @@ chmod +x proxmox-restore.sh
 
 **Available sections:** `configs` | `vms` | `cron` | `firewall` | `ssh` | `packages` | `scripts` | `minecraft`
 
+### Restoring VM agent bundles
+
+Each VM bundle is stored separately under `vm-agents/<label>/` and contains
+its own `restore-notes.txt` with type-specific instructions.
+
+```bash
+# Inspect a bundle without extracting
+zstd -d vm-agents/docker-vm/pabs-bundle-*.tar.zst --stdout | tar -t
+
+# Read the restore instructions
+zstd -d vm-agents/docker-vm/pabs-bundle-*.tar.zst --stdout \
+    | tar -x --to-stdout restore-notes.txt
+
+# Extract everything
+mkdir restore-docker && \
+    zstd -d vm-agents/docker-vm/pabs-bundle-*.tar.zst --stdout \
+    | tar -x -C restore-docker/
+```
+
+**HAOS:** the bundle contains a native `.tar` snapshot. Restore via
+Settings → Backups → Upload in the HA UI, or `ha backup restore <slug>` via CLI.
+
 ### Verify integrity before restoring
 
 ```bash
@@ -182,13 +240,12 @@ sha256sum --check MANIFEST.sha256
 - Disk layout, kernel version, Proxmox version
 - ZFS pool/dataset info (if `BACKUP_ZFS="true"`)
 - `/usr/local/bin`, `/root/scripts`
-- Minecraft weekly archives (pulled from KVM guest via SSH)
+- **VM/LXC restore bundles** (if `VM_AGENTS` is configured) — compose files for Docker VMs, native snapshots for HAOS, weekly archives + server config for Minecraft, `/etc` + package list for generic LXCs
 
 **Not backed up:**
 - VM and CT disk images — use Proxmox's built-in `vzdump` for those
-- Minecraft world data directly — PABS copies the weekly `.tar.zst` archives
-  produced by [minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup);
-  world data is whatever that tool chose to include in those archives
+- Docker container data volumes beyond the auto-include size threshold (configurable per VM in `/etc/pabs-agent/config`)
+- Minecraft world data directly — the agent copies the `.tar.zst` archives produced by `minecraft-server-setup`; world data is whatever that tool chose to include
 
 ---
 
