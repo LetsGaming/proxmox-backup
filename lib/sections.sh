@@ -92,7 +92,7 @@ section_vm_ct_definitions() {
         [[ -z "$vmid" ]] && continue
         if qm config "$vmid" > "$vm_dest/vms/vm-${vmid}.conf" 2>>"$LOG"; then
             log "  ✓ VM $vmid"
-            (( vm_count++ )) || true
+            : $(( vm_count++ ))
         else
             log_warn "Could not export config for VM $vmid"
         fi
@@ -103,7 +103,7 @@ section_vm_ct_definitions() {
         [[ -z "$ctid" ]] && continue
         if pct config "$ctid" > "$vm_dest/containers/ct-${ctid}.conf" 2>>"$LOG"; then
             log "  ✓ CT $ctid"
-            (( ct_count++ )) || true
+            : $(( ct_count++ ))
         else
             log_warn "Could not export config for CT $ctid"
         fi
@@ -174,10 +174,10 @@ section_system_state() {
     backup_path "/etc/fstab" "fstab"
 
     if [[ "$BACKUP_ZFS" == "true" ]]; then
-        backup_cmd_output "$s/zfs-pool-status.txt"       "ZFS pool status"              zpool status
+        backup_cmd_output "$s/zfs-pool-status.txt"       "ZFS pool status"               zpool status
         backup_cmd_output "$s/zfs-pool-status-by-id.txt" "ZFS pool status (by-id paths)" zpool status -P
-        backup_cmd_output "$s/zfs-pool-list.txt"         "ZFS pool list"                zpool list -v
-        backup_cmd_output "$s/zfs-dataset-list.txt"      "ZFS dataset list"             zfs list -t all
+        backup_cmd_output "$s/zfs-pool-list.txt"         "ZFS pool list"                 zpool list -v
+        backup_cmd_output "$s/zfs-dataset-list.txt"      "ZFS dataset list"              zfs list -t all
 
         local zfs_dir="$STAGE_DIR/$s/zfs-configs"
         mkdir -p "$zfs_dir"
@@ -191,13 +191,13 @@ section_system_state() {
 
     # LVM — export human-readable summaries and a machine-readable vgcfgbackup
     # that can be restored with: vgcfgrestore -f lvm-vg-<name>.cfg <vg-name>
-    if command -v vgs &>/dev/null && vgs &>/dev/null 2>/dev/null; then
-        backup_cmd_output "$s/lvm-pvs.txt" "LVM physical volumes" pvs  --units b --nosuffix
-        backup_cmd_output "$s/lvm-vgs.txt" "LVM volume groups"    vgs  --units b --nosuffix
-        backup_cmd_output "$s/lvm-lvs.txt" "LVM logical volumes"  lvs  --units b --nosuffix
+    if command -v vgs &>/dev/null && vgs &>/dev/null; then
+        backup_cmd_output "$s/lvm-pvs.txt" "LVM physical volumes" pvs --units b --nosuffix
+        backup_cmd_output "$s/lvm-vgs.txt" "LVM volume groups"    vgs --units b --nosuffix
+        backup_cmd_output "$s/lvm-lvs.txt" "LVM logical volumes"  lvs --units b --nosuffix
         vgcfgbackup -f "$STAGE_DIR/$s/lvm-vg-%s.cfg" 2>>"$LOG" \
-            && log "  ✓ LVM VG configs (machine-readable, restorable with vgcfgrestore)" \
-            || log_warn "LVM vgcfgbackup failed (non-fatal — may require root or lvm2 installed)"
+            && log "  ✓ LVM VG configs (restorable with vgcfgrestore)" \
+            || log_warn "LVM vgcfgbackup failed (non-fatal)"
     fi
 }
 
@@ -207,128 +207,159 @@ section_system_state() {
 
 section_custom_scripts() {
     log "[7/8] Custom scripts"
-    backup_path "/usr/local/bin"   "Custom scripts in /usr/local/bin"
-    backup_path "/root/scripts"    "Root scripts folder"
-    # Back up the backup script itself so it travels with the backup
-    backup_path "$(realpath "${BASH_SOURCE[0]%/lib/*}/backup.sh")" "backup.sh"
-    backup_path "$(realpath "${BASH_SOURCE[0]%/lib/*}/config.sh")"  "config.sh"
+    backup_path "/usr/local/bin" "Custom scripts in /usr/local/bin"
+    backup_path "/root/scripts"  "Root scripts folder"
+
+    # back up the backup script itself so it travels with the backup
+    local pabs_root
+    pabs_root="$(realpath "${BASH_SOURCE[0]%/lib/*}")"
+    backup_path "$pabs_root/backup.sh" "backup.sh"
+
+    # config.sh is backed up with secrets redacted — the restored copy is useful
+    # for reference (paths, SSH opts, flags) but must not expose credentials if
+    # the USB medium is lost or shared.  The original on the host is not modified.
+    local config_src="$pabs_root/config.sh"
+    local config_dest="$STAGE_DIR/config.sh"
+
+    if [[ -f "$config_src" ]]; then
+        sed \
+            -e 's|\(DISCORD_WEBHOOK=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
+            -e 's|\(NOTIFY_EMAIL=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
+            -e 's|\(PORTAINER_TOKEN=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
+            -e '/[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]\|[Ss][Ee][Cc][Rr][Ee][Tt]\|_TOKEN\|_KEY\|WEBHOOK/ \
+                s|="\([^"]\{4,\}\)"|="<REDACTED>"|g' \
+            "$config_src" > "$config_dest"
+        chmod 600 "$config_dest"
+        log "  ✓ config.sh (secrets redacted)"
+    else
+        log_warn "config.sh not found at $config_src — skipping"
+    fi
 }
 
 # -----------------------------------------------------------------------------
 # SECTION 8: VM / LXC agent backups
-#
-# Minecraft backups are handled here via the VM agent — no separate section.
-# Add your Minecraft VM to VM_AGENTS in config.sh:
-#   "minecraft-vm  <ip>  minecraft  /opt/pabs-agent/agent.sh"
 # -----------------------------------------------------------------------------
 
 section_vm_agents() {
     log "[8/8] VM agent backups"
-
-    # VM_AGENTS is defined in config.sh as an array of strings, one per VM/LXC.
-    # Each entry format: "label  ip-or-hostname  ssh-user  agent-path"
-    #   label       — short name used for the backup subfolder and log output
-    #   ip/host     — address reachable from this Proxmox host
-    #   ssh-user    — user to SSH in as (must have read access + can run agent.sh)
-    #   agent-path  — full path to agent.sh on the remote host
 
     if [[ ${#VM_AGENTS[@]} -eq 0 ]]; then
         log "  No VM_AGENTS configured — skipping"
         return
     fi
 
-    local total_ok=0
-    local total_fail=0
-    local total_skip=0
+    local total_ok=0 total_fail=0 total_skip=0
+    local max_parallel="${VM_AGENT_MAX_PARALLEL:-1}"
+    local pids=()
 
-    for entry in "${VM_AGENTS[@]}"; do
-        # Parse the 4 fields — tolerates multiple spaces/tabs as delimiter
+    _run_agent() {
+        local entry="$1"
+        local label vm_host ssh_user agent_path
         read -r label vm_host ssh_user agent_path <<< "$entry"
 
         if [[ -z "$label" || -z "$vm_host" || -z "$ssh_user" || -z "$agent_path" ]]; then
-            log_warn "  Skipping malformed VM_AGENTS entry: '$entry'"
-            log_warn "  Expected: \"label  ip-or-hostname  ssh-user  /path/to/agent.sh\""
-            (( total_skip++ )) || true
-            continue
+            log "  ⚠  Skipping malformed VM_AGENTS entry: '$entry'"
+            return 2
         fi
 
         log "  [$label] $ssh_user@$vm_host"
 
-        # Build SSH options for this VM.
-        # Per-VM key: VM_SSH_KEY_<label> (dashes → underscores) takes precedence.
-        # Falls back to shared VM_SSH_KEY, then to the host's default key.
         local ssh_opts=("${VM_AGENT_SSH_OPTS[@]}")
         local key_var="VM_SSH_KEY_${label//-/_}"
-        if [[ -n "${!key_var:-}" ]]; then
-            ssh_opts+=(-i "${!key_var}")
-        elif [[ -n "${VM_SSH_KEY:-}" ]]; then
-            ssh_opts+=(-i "$VM_SSH_KEY")
-        fi
+        [[ -n "${!key_var:-}" ]] && ssh_opts+=(-i "${!key_var}")
+        [[ -n "${VM_SSH_KEY:-}" && -z "${!key_var:-}" ]] && ssh_opts+=(-i "$VM_SSH_KEY")
 
-        # Check connectivity before attempting the backup
         if ! ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" exit 2>/dev/null; then
-            log_err "  [$label] Cannot connect to $vm_host — skipping"
-            (( total_fail++ )) || true
-            continue
+            log "  ✗  [$label] Cannot connect to $vm_host — skipping"
+            return 1
         fi
 
-        # Temporary bundle path on the remote host's /tmp
         local remote_bundle="/tmp/pabs-bundle-${label}-${DATE}.tar.zst"
-
-        # Local destination inside the staging tree
         local local_dest="$STAGE_DIR/vm-agents/$label"
         mkdir -p "$local_dest"
 
-        # Step 1: Run the agent on the remote host
-        log "    Running agent on $vm_host..."
         if ! ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
                 "$agent_path" "--bundle-output" "$remote_bundle" 2>>"$LOG"; then
-            log_err "  [$label] Agent failed on $vm_host"
-            (( total_fail++ )) || true
-            # Clean up any partial bundle left on the remote
-            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
-                "rm -f $remote_bundle" 2>/dev/null || true
-            continue
+            log "  ✗  [$label] Agent failed on $vm_host"
+            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f '$remote_bundle'" 2>/dev/null || true
+            return 1
         fi
 
-        # Step 2: Rsync the bundle back to local staging
-        log "    Pulling bundle from $vm_host..."
-        if rsync -a -e "ssh ${ssh_opts[*]@Q}" \
+        if ! rsync -a -e "ssh ${ssh_opts[*]@Q}" \
                 "$ssh_user@$vm_host:$remote_bundle" "$local_dest/" 2>>"$LOG"; then
-            local size_kb
-            size_kb=$(du -sk "$local_dest/$(basename "$remote_bundle")" 2>/dev/null | cut -f1)
-            log "  ✓ [$label] bundle pulled (${size_kb}KB)"
-            (( total_ok++ )) || true
-        else
-            log_err "  [$label] rsync of bundle failed"
-            (( total_fail++ )) || true
+            log "  ✗  [$label] rsync of bundle failed"
+            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f '$remote_bundle'" 2>/dev/null || true
+            return 1
         fi
 
-        # Step 3: Remove the temporary bundle from the remote host
-        ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
-            "rm -f $remote_bundle" 2>/dev/null || true
+        local size_kb
+        size_kb=$(du -sk "$local_dest/$(basename "$remote_bundle")" 2>/dev/null | cut -f1)
+        log "  ✓  [$label] bundle pulled (${size_kb}KB)"
 
-        # Step 4: Prune old bundles for this VM on USB (enforces VM_AGENT_KEEP_BUNDLES)
-        # Note: this runs against STAGE_DIR (local SSD) — USB rotation happens
-        # via the normal rotate_old_backups() which operates on whole backup dirs.
-        # Per-VM bundle retention within a single backup dir is handled here.
+        ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f '$remote_bundle'" 2>/dev/null || true
+
+        # Space check after pull
+        local avail_kb
+        avail_kb=$(df -k "$LOCAL_STAGE_BASE" | awk 'NR==2{print $4}')
+        if [[ $avail_kb -lt "${VM_AGENT_STAGE_MIN_FREE_KB:-524288}" ]]; then
+            log "  ✗  [$label] Stage critically low (${avail_kb}KB free) — aborting agent section"
+            return 3
+        fi
+
+        # Prune old bundles for this VM
         local keep="${VM_AGENT_KEEP_BUNDLES:-2}"
-        mapfile -t existing_bundles < <(
+        local old_bundles=()
+        mapfile -t old_bundles < <(
             find "$local_dest" -maxdepth 1 -type f -name "*.tar.zst" \
-                -printf '%T@ %p\n' | sort -n | awk '{print $2}'
+                -printf '%T@ %p\n' | sort -n | awk '{print $2}' | head -n -"$keep"
         )
-        if [[ ${#existing_bundles[@]} -gt $keep ]]; then
-            local excess=$(( ${#existing_bundles[@]} - keep ))
-            for (( i=0; i<excess; i++ )); do
-                rm -f "${existing_bundles[$i]}"
-                log "    pruned old bundle: $(basename "${existing_bundles[$i]}")"
-            done
+        for b in "${old_bundles[@]}"; do
+            rm -f "$b"
+            log "    [$label] pruned old bundle: $(basename "$b")"
+        done
+
+        return 0
+    }
+
+    _wait_one() {
+        local pid=$1 rc
+        wait "$pid" && rc=0 || rc=$?
+        case $rc in
+            0) : $(( total_ok++ ))   ;;
+            2) : $(( total_skip++ )) ;;
+            3) : $(( total_fail++ )); return 3 ;;  # abort: stage full
+            *) : $(( total_fail++ )) ;;
+        esac
+        return 0
+    }
+
+    local abort=false
+    for entry in "${VM_AGENTS[@]}"; do
+        $abort && break
+
+        if [[ $max_parallel -le 1 ]]; then
+            _run_agent "$entry" && : $(( total_ok++ )) || {
+                local rc=$?
+                case $rc in
+                    2) : $(( total_skip++ )) ;;
+                    3) : $(( total_fail++ )); abort=true ;;
+                    *) : $(( total_fail++ )) ;;
+                esac
+            }
+        else
+            _run_agent "$entry" &
+            pids+=($!)
+            if [[ ${#pids[@]} -ge $max_parallel ]]; then
+                _wait_one "${pids[0]}" || abort=true
+                pids=("${pids[@]:1}")
+            fi
         fi
     done
 
-    log "  VM agents: $total_ok OK, $total_fail failed, $total_skip skipped"
+    for pid in "${pids[@]}"; do
+        _wait_one "$pid" || abort=true
+    done
 
-    if [[ $total_fail -gt 0 ]]; then
-        log_err "  $total_fail VM agent(s) failed — see log for details"
-    fi
+    log "  VM agents: $total_ok OK, $total_fail failed, $total_skip skipped"
+    [[ $total_fail -gt 0 ]] && log_err "$total_fail VM agent(s) failed"
 }

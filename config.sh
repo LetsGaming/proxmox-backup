@@ -27,7 +27,7 @@ KEEP_BACKUPS=4
 # All backup data is assembled here on the Proxmox host's own disk first.
 # The USB drive sees only a single sequential write at the very end.
 # This directory needs enough free space to hold one full backup
-# (roughly: all configs + Minecraft archives + VM agent bundles combined).
+# (roughly: all configs + VM agent bundles combined).
 #
 # DEFAULT: /var/tmp/pabs-stage  (survives reboots, lives on root LVM)
 #
@@ -42,8 +42,6 @@ KEEP_BACKUPS=4
 # device as / and has less than LOCAL_STAGE_WARN_GB free.
 LOCAL_STAGE_BASE="/var/tmp/pabs-stage"
 LOCAL_STAGE_WARN_GB=5
-
-
 
 # -----------------------------------------------------------------------------
 # VM / LXC AGENT BACKUPS
@@ -103,10 +101,17 @@ VM_SSH_KEY=""
 # which can be 500MB+).
 VM_AGENT_KEEP_BUNDLES=2
 
+# Maximum number of VM agents to run in parallel (default: 1 = sequential).
+# Increase if you have many agents and want to cut total backup time.
+# Log lines from parallel workers are written sequentially via the shared log.
+VM_AGENT_MAX_PARALLEL=1
+
+# Minimum free space (KB) required on local stage after each agent bundle pull.
+# If breached the agent section aborts immediately. Default: 512 MB.
+VM_AGENT_STAGE_MIN_FREE_KB=524288
+
 # SSH options applied to every VM agent connection.
-# Adjust ConnectTimeout if VMs are slow to respond.
-# StrictHostKeyChecking=yes is used for cron safety (TOFU attack prevention).
-# Run install-agent.sh to register host keys in /root/.ssh/pabs_known_hosts first.
+# StrictHostKeyChecking=yes requires host keys to be registered via install-agent.sh.
 VM_AGENT_SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 \
                    -o StrictHostKeyChecking=yes \
                    -o UserKnownHostsFile=/root/.ssh/pabs_known_hosts)
@@ -133,6 +138,23 @@ NOTIFY_EMAIL=""
 # Set to "false" only on setups that do not use ZFS at all.
 BACKUP_ZFS="true"
 
+# Offsite sync via rclone — provides the third copy for 3-2-1 backup compliance.
+# Runs after each successful USB commit. Non-fatal: USB backup is always intact.
+#
+# Prerequisites:
+#   apt install rclone
+#   rclone config  — set up a named remote (e.g. "backblaze", "hetzner-sftp")
+#
+# Examples:
+#   RCLONE_REMOTE="backblaze:my-bucket/proxmox-backup"
+#   RCLONE_REMOTE="hetzner-sftp:backup/proxmox"
+# Leave empty to disable.
+RCLONE_REMOTE=""
+
+# Extra rclone flags — bandwidth limit, parallel transfers, etc.
+# "--bwlimit 5M" caps upload at 5 MB/s to avoid saturating the uplink.
+RCLONE_EXTRA_OPTS="--bwlimit 5M"
+
 # =============================================================================
 # INTERNAL VARS — do not edit below this line
 # =============================================================================
@@ -150,3 +172,7 @@ LOCK_FILE="$LOCAL_STAGE_BASE/.backup.lock"
 
 WARNINGS=0
 ERRORS=0
+
+# Immutable after sourcing — guard against accidental re-assignment in scripts
+# sourced later (custom scripts, type handlers).
+readonly SCRIPT_VERSION USB_MOUNT BACKUP_ROOT LOCAL_STAGE_BASE LOG LOCK_FILE

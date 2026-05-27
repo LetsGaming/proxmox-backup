@@ -13,9 +13,12 @@ pabs/
 ├── backup.sh              Entry point — run this (or schedule it in cron)
 ├── config.sh              Your configuration — the only file you need to edit
 ├── install-agent.sh       One-time setup: deploys the VM agent to a VM over SSH
+├── pabs-status.sh         Health check — shows USB, backup state, VM reachability
 ├── INTEGRATION.md         Step-by-step guide for adding VM agent support
+├── tests/
+│   └── pabs.bats          Automated test suite (requires bats-core)
 ├── lib/
-│   ├── core.sh            Logging, lock management, trap, and notifications
+│   ├── core.sh            Logging, lock management, trap, notifications, offsite sync
 │   ├── preflight.sh       Pre-flight validation (USB, space checks)
 │   ├── sections.sh        The 8 backup sections and their helper functions
 │   ├── manifest.sh        SHA256 manifest generation/verification and rotation
@@ -58,6 +61,7 @@ Open `config.sh` and fill in:
 | `VM_SSH_KEY` | Shared SSH key for VM agent connections (leave empty for default) |
 | `DISCORD_WEBHOOK` | Discord webhook URL for alerts (leave empty to disable) |
 | `NOTIFY_EMAIL` | Fallback email for failure alerts (leave empty to disable) |
+| `RCLONE_REMOTE` | rclone remote + path for offsite sync (leave empty to disable) |
 
 Everything else has sensible defaults.
 
@@ -132,6 +136,42 @@ Add (runs every Sunday at 03:00):
 ```
 0 3 * * 0 /opt/pabs/backup.sh
 ```
+
+### 7. Set up offsite sync (optional, recommended)
+
+PABS implements the **3-2-1 backup principle**: local SSD (staging) → USB stick → offsite. The third copy is handled by rclone and runs automatically after each successful backup.
+
+**Install rclone:**
+```bash
+apt install rclone
+```
+
+**Configure a remote** (interactive wizard):
+```bash
+rclone config
+```
+
+Common choices for a Homelab:
+- **Backblaze B2** — cheap object storage (~$0.006/GB/month), simple setup
+- **Hetzner Storage Box** — SFTP, good EU option, fixed pricing
+- **Wasabi** — S3-compatible, no egress fees
+- **Local NAS / second server** — use `sftp` or `local` remote type
+
+**Set in config.sh:**
+```bash
+RCLONE_REMOTE="backblaze:my-bucket/proxmox-backup"
+RCLONE_EXTRA_OPTS="--bwlimit 5M"   # optional: cap upload speed
+```
+
+Each backup run syncs only the new backup directory. Old offsite copies are not touched by PABS — manage retention on the remote side via your provider's lifecycle rules or `rclone delete`.
+
+### 8. Health check
+
+```bash
+/opt/pabs/pabs-status.sh
+```
+
+Checks without running a backup: USB mounted, most recent backup with manifest integrity, all VM agents reachable, offsite remote reachable, local stage space. Returns exit 0 (OK), 1 (error), or 2 (warning). Use with `--json` for monitoring integration.
 
 ### Minecraft integration
 
@@ -258,3 +298,18 @@ sha256sum --check MANIFEST.sha256
 - **Post-transfer verification** — manifest is re-checked on the USB after transfer
 - **Auto space recovery** — purges the oldest backup if the USB is full, refuses if it's the last one
 - **Dual-channel alerts** — Discord webhook (primary) + local mail (fallback)
+- **3-2-1 offsite sync** — optional rclone sync to a remote after each commit; non-fatal on failure, USB backup always intact
+
+---
+
+## Planned features
+
+These are tracked but not yet implemented. PRs welcome.
+
+**Encryption at rest (`age`)** — Encrypt each backup directory on the USB with a public key (`age`). The private key lives outside the USB medium — losing the key means losing access to the backup. Needs careful key-backup documentation before this is useful in a DR scenario.
+
+**GFS retention** — Grandfather-Father-Son rotation (`KEEP_DAILY` / `KEEP_WEEKLY` / `KEEP_MONTHLY`) instead of the current simple `KEEP_BACKUPS` count. Low priority for a Homelab with weekly backups and a single USB stick.
+
+**Incremental hardlink snapshots** — `rsync --link-dest` to avoid re-copying unchanged files between backup runs. Meaningful only if the USB is large enough to hold many snapshots; not worth the complexity otherwise.
+
+**JSONL manifest** — Machine-readable `MANIFEST.jsonl` alongside `MANIFEST.sha256` for diffing between backup versions and selective restore. Nice to have, adds no DR value.

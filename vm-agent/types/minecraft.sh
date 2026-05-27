@@ -308,7 +308,7 @@ run_backup() {
     fi
 
     # System state — useful if you need to know what OS/Java version was running
-    stage_cmd "system-state/java-version.txt"  "Java version"  java -version
+    stage_cmd "system-state/java-version.txt"  "Java version"  bash -c 'java -version 2>&1'
     stage_cmd "system-state/os-release.txt"    "OS release"    cat /etc/os-release
     stage_cmd "system-state/hostname.txt"      "Hostname"      hostname
 

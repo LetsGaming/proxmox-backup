@@ -104,3 +104,37 @@ _on_exit() {
 
 # Attach on source — backup.sh detaches/reattaches around the atomic commit
 trap '_on_exit' ERR EXIT
+
+# -----------------------------------------------------------------------------
+# OFFSITE SYNC
+# Rsyncs the finished backup directory to a configured rclone remote.
+# Called after USB commit + manifest verification. Non-fatal on failure.
+# -----------------------------------------------------------------------------
+
+offsite_sync() {
+    [[ -z "${RCLONE_REMOTE:-}" ]] && return 0
+
+    if ! command -v rclone &>/dev/null; then
+        log_warn "RCLONE_REMOTE is set but rclone is not installed — skipping offsite sync"
+        log_warn "  Install with: apt install rclone"
+        return 0
+    fi
+
+    local dest="$RCLONE_REMOTE/$(basename "$FINAL_DIR")"
+    log "Syncing to offsite: $dest"
+
+    # shellcheck disable=SC2206
+    local extra_opts=($RCLONE_EXTRA_OPTS)
+
+    if rclone sync "$FINAL_DIR" "$dest" \
+            "${extra_opts[@]}" \
+            --log-file="$LOG" \
+            --log-level INFO \
+            2>>"$LOG"; then
+        log "  ✓ Offsite sync complete"
+        dispatch_alert "SUCCESS — offsite sync $DATE complete to $dest"
+    else
+        log_err "Offsite sync to $dest failed — local USB backup is intact"
+        dispatch_alert "WARNING — offsite sync $DATE FAILED to $dest. USB backup intact. Review: $LOG"
+    fi
+}

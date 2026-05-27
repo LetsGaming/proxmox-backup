@@ -18,7 +18,8 @@
 #   install-agent.sh       ← one-time setup: deploys vm-agent to a VM over SSH
 #
 # Usage:
-#   ./backup.sh
+#   ./backup.sh               — normal backup run
+#   ./backup.sh --dry-run     — preflight checks + section log only, no writes
 #   (schedule with cron: 0 3 * * 0 /path/to/pabs/backup.sh)
 # =============================================================================
 
@@ -26,6 +27,24 @@ set -euo pipefail
 
 # Resolve the directory this script lives in, regardless of how it was called
 PABS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+DRY_RUN=false
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=true ;;
+        --help|-h)
+            echo "Usage: $0 [--dry-run]"
+            echo "  --dry-run  Run preflight checks and log what would be backed up."
+            echo "             No files are written to staging or USB."
+            exit 0
+            ;;
+        *) echo "Unknown argument: $arg"; exit 1 ;;
+    esac
+done
+export DRY_RUN
 
 # Source config first — defines all variables consumed by the libs
 source "$PABS_DIR/config.sh"
@@ -35,8 +54,22 @@ source "$PABS_DIR/config.sh"
 source "$PABS_DIR/lib/core.sh"
 source "$PABS_DIR/lib/preflight.sh"
 source "$PABS_DIR/lib/sections.sh"
-source "$PABS_DIR/lib/manifest.sh"
-source "$PABS_DIR/lib/output.sh"
+source "$PABS_DIR/helpers/manifest.sh"
+source "$PABS_DIR/helpers/output.sh"
+
+# ---------------------------------------------------------------------------
+# Dry-run wrapper: logs what would run, skips all writes
+# ---------------------------------------------------------------------------
+maybe_run() {
+    # Usage: maybe_run <description> <function_or_command> [args...]
+    # In dry-run mode: prints the description and returns without executing.
+    local desc="$1"; shift
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "  [DRY-RUN] would run: $desc"
+    else
+        "$@"
+    fi
+}
 
 # =============================================================================
 # MAIN
@@ -46,6 +79,8 @@ check_root
 check_usb_mounted
 
 mkdir -p "$BACKUP_ROOT" "$LOCAL_STAGE_BASE"
+
+$DRY_RUN && log "======== DRY-RUN MODE — no writes will occur ========"
 acquire_lock
 
 log "========================================"
@@ -54,25 +89,35 @@ log "Version        : $SCRIPT_VERSION"
 log "Host           : $(hostname)"
 log "USB mount      : $USB_MOUNT"
 log "Local stage    : $LOCAL_STAGE_BASE"
-log "MC VM          : (handled via VM agent)"
 log "VM agents      : ${#VM_AGENTS[@]} configured"
+$DRY_RUN && log "Mode           : DRY-RUN (no data written)"
 log "========================================"
 
 check_local_stage_space
 check_usb_space
 
-mkdir -p "$STAGE_DIR"
+maybe_run "mkdir staging $STAGE_DIR" mkdir -p "$STAGE_DIR"
 
 # --- Backup sections — all output goes to STAGE_DIR on local SSD --------
-# The USB drive is completely untouched during this phase.
-section_proxmox_configs      # [1/8] /etc/pve (tar), network, hosts, APT
-section_vm_ct_definitions    # [2/8] qm/pct config exports + raw pmxcfs files
-section_cron_jobs            # [3/8] crontabs
-section_firewall             # [4/8] nftables, iptables, Proxmox firewall
-section_ssh_keys             # [5/8] sshd_config, /root/.ssh
-section_system_state         # [6/8] packages, disk layout, ZFS (if enabled)
-section_custom_scripts       # [7/8] /usr/local/bin, /root/scripts, this script
-section_vm_agents            # [8/8] lightweight agent backups for all VMs and LXCs
+maybe_run "section_proxmox_configs"   section_proxmox_configs
+maybe_run "section_vm_ct_definitions" section_vm_ct_definitions
+maybe_run "section_cron_jobs"         section_cron_jobs
+maybe_run "section_firewall"          section_firewall
+maybe_run "section_ssh_keys"          section_ssh_keys
+maybe_run "section_system_state"      section_system_state
+maybe_run "section_custom_scripts"    section_custom_scripts
+maybe_run "section_vm_agents"         section_vm_agents
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    log "========================================"
+    log "DRY-RUN complete — no data written."
+    log "Warnings : $WARNINGS"
+    log "Errors   : $ERRORS"
+    log "========================================"
+    release_lock
+    trap - ERR EXIT
+    exit 0
+fi
 
 # Verify integrity on local SSD before a single byte goes to USB.
 # A failed check aborts cleanly; _on_exit cleans up STAGE_DIR.
@@ -123,6 +168,9 @@ sync
 
 # Belt-and-suspenders: re-verify the manifest against what landed on USB
 verify_manifest_on_usb
+
+# Offsite sync — runs only if RCLONE_REMOTE is configured, non-fatal on failure
+offsite_sync
 
 # Rotate old backups only after the new one is successfully committed
 rotate_old_backups
