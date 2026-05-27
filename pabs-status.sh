@@ -155,10 +155,51 @@ if [[ -z "${RCLONE_REMOTE:-}" ]]; then
     _warn "RCLONE_REMOTE not configured — no offsite backup (3-2-1 incomplete)"
 elif ! command -v rclone &>/dev/null; then
     _fail "RCLONE_REMOTE is set but rclone is not installed (apt install rclone)"
-elif rclone lsd "$RCLONE_REMOTE" --max-depth 1 &>/dev/null; then
-    _ok "rclone remote reachable: $RCLONE_REMOTE"
 else
-    _fail "rclone remote unreachable: $RCLONE_REMOTE"
+    # Encryption status
+    if [[ -n "${RCLONE_ENCRYPTION_PASSWORD:-}" ]]; then
+        _ok "Encryption: enabled (crypt remote)"
+    else
+        _warn "Encryption: disabled — provider can read your data (set RCLONE_ENCRYPTION_PASSWORD)"
+    fi
+
+    # Retention config summary
+    local keep_min="${RCLONE_KEEP_MIN:-1}"
+    local keep_max="${RCLONE_KEEP_MAX:-4}"
+    local max_gb="${RCLONE_MAX_STORAGE_GB:-0}"
+    local retention_msg="min=${keep_min}"
+    [[ $keep_max -gt 0 ]] && retention_msg+=", max=${keep_max}" || retention_msg+=", max=unlimited"
+    [[ $max_gb -gt 0 ]]   && retention_msg+=", cap=${max_gb}GB" || retention_msg+=", cap=unlimited"
+    _ok "Retention policy: $retention_msg"
+
+    # Reachability check
+    if rclone lsd "$RCLONE_REMOTE" --max-depth 1 &>/dev/null; then
+        _ok "Remote reachable: $RCLONE_REMOTE"
+
+        # Count existing offsite backups and show storage usage
+        local offsite_count
+        offsite_count=$(rclone lsf "$RCLONE_REMOTE" --dirs-only 2>/dev/null \
+            | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}/$' || echo 0)
+        local offsite_gb
+        offsite_gb=$(rclone size "$RCLONE_REMOTE" --json 2>/dev/null \
+            | python3 -c "import json,sys; b=json.load(sys.stdin).get('bytes',0); print(round(b/1073741824,2))" \
+            2>/dev/null || echo "?")
+        _ok "Remote backups: ${offsite_count} backup(s), ${offsite_gb}GB used"
+
+        # Warn if below KEEP_MIN (e.g. fresh setup or after a prune issue)
+        if [[ "$offsite_count" =~ ^[0-9]+$ && $offsite_count -lt $keep_min ]]; then
+            _warn "Only ${offsite_count} offsite backup(s) — below RCLONE_KEEP_MIN=${keep_min}"
+        fi
+
+        # Warn if over storage cap
+        if [[ $max_gb -gt 0 && "$offsite_gb" =~ ^[0-9] ]]; then
+            if python3 -c "import sys; sys.exit(0 if float('$offsite_gb') > float('$max_gb') else 1)" 2>/dev/null; then
+                _warn "Remote usage ${offsite_gb}GB exceeds RCLONE_MAX_STORAGE_GB=${max_gb} — will prune on next backup"
+            fi
+        fi
+    else
+        _fail "Remote unreachable: $RCLONE_REMOTE"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

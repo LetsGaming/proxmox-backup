@@ -554,5 +554,74 @@ After full rebuild, check:
 - Backup integrity: `cd <this-directory> && sha256sum --check MANIFEST.sha256`
 EOF
 
+    # Offsite recovery instructions — only written if rclone was configured
+    if [[ -n "${RCLONE_REMOTE:-}" ]]; then
+        local encryption_note=""
+        if [[ -n "${RCLONE_ENCRYPTION_PASSWORD:-}" ]]; then
+            encryption_note="
+> **Encrypted remote:** the offsite data was encrypted with rclone crypt.
+> You need your \`RCLONE_ENCRYPTION_PASSWORD\` (and \`RCLONE_ENCRYPTION_SALT\` if set)
+> to access it. Without these, the offsite data cannot be decrypted.
+> Retrieve them from your password manager before proceeding."
+        fi
+
+        cat >> "$dest" << EOF
+
+---
+
+## Recovering from offsite (if USB is lost or unavailable)
+${encryption_note}
+
+The offsite remote (\`${RCLONE_REMOTE}\`) holds the same backup directories
+as the USB stick, named by date (\`YYYY-MM-DD_HH-MM-SS/\`).
+
+### Step 1 — Install rclone and configure the base remote
+\`\`\`bash
+apt install rclone
+rclone config  # re-configure the same remote as on the original host
+\`\`\`
+EOF
+
+        if [[ -n "${RCLONE_ENCRYPTION_PASSWORD:-}" ]]; then
+            cat >> "$dest" << 'EOF'
+
+### Step 2 — Re-create the encryption wrapper
+```bash
+# Replace <PASSWORD> and <SALT> with your stored credentials.
+# Use the same values as on the original host — wrong credentials = unreadable data.
+rclone config create pabs_crypt_runtime crypt \
+    remote          "<your-base-remote-path>" \
+    filename_encryption standard \
+    directory_name_encryption true \
+    password        "$(rclone obscure '<PASSWORD>')" \
+    password2       "$(rclone obscure '<SALT>')"   # omit if no salt was set
+```
+
+Access the remote via `pabs_crypt_runtime:` from here on.
+EOF
+        fi
+
+        cat >> "$dest" << EOF
+
+### Step 3 — Download the backup
+\`\`\`bash
+# List available backups
+rclone lsf "${RCLONE_REMOTE}" --dirs-only
+
+# Download the most recent one (adjust date as needed)
+mkdir -p /mnt/restore
+rclone copy "${RCLONE_REMOTE}/<YYYY-MM-DD_HH-MM-SS>" /mnt/restore/ --progress
+\`\`\`
+
+### Step 4 — Verify and restore
+\`\`\`bash
+cd /mnt/restore
+sha256sum --check MANIFEST.sha256
+chmod +x proxmox-restore.sh
+./proxmox-restore.sh
+\`\`\`
+EOF
+    fi
+
     log "  ✓ DISASTER-RECOVERY.md generated"
 }

@@ -143,23 +143,89 @@ BACKUP_ZFS="true"
 #
 # Prerequisites:
 #   apt install rclone
-#   rclone config  — set up a named remote (e.g. "backblaze", "hetzner-sftp")
+#   rclone config  — set up a named remote (e.g. "gdrive", "onedrive", "backblaze")
 #
 # Examples:
-#   RCLONE_REMOTE="backblaze:my-bucket/proxmox-backup"
-#   RCLONE_REMOTE="hetzner-sftp:backup/proxmox"
-# Leave empty to disable.
+#   RCLONE_REMOTE="gdrive:proxmox-backup"        # Google Drive (15 GB free)
+#   RCLONE_REMOTE="onedrive:proxmox-backup"      # OneDrive (5 GB free)
+#   RCLONE_REMOTE="backblaze:my-bucket/proxmox"  # Backblaze B2
+#   RCLONE_REMOTE="hetzner-sftp:backup/proxmox"  # any SFTP/S3-compatible remote
+#
+# Only the base remote is configured here. If RCLONE_ENCRYPTION_PASSWORD is set,
+# PABS automatically wraps this remote with rclone's crypt layer — no extra
+# rclone config steps required for encryption.
+#
+# Leave empty to disable offsite sync entirely.
 RCLONE_REMOTE=""
 
 # Extra rclone flags — bandwidth limit, parallel transfers, etc.
 # "--bwlimit 5M" caps upload at 5 MB/s to avoid saturating the uplink.
 RCLONE_EXTRA_OPTS="--bwlimit 5M"
 
+# -----------------------------------------------------------------------------
+# OFFSITE RETENTION
+# -----------------------------------------------------------------------------
+# Controls how many backups to keep on the offsite remote and how much storage
+# to consume. Useful for fitting within free-tier limits (OneDrive 5 GB,
+# Google Drive 15 GB) while guaranteeing a minimum number of restore points.
+#
+# RCLONE_KEEP_MIN  — Never delete below this many offsite backups, even if
+#                    RCLONE_KEEP_MAX or RCLONE_MAX_STORAGE_GB would require it.
+#                    Set to 1 to always keep at least one offsite copy.
+#
+# RCLONE_KEEP_MAX  — Prune oldest offsite backups once this count is exceeded.
+#                    Set to 0 to disable count-based pruning (rely on storage cap only).
+#
+# RCLONE_MAX_STORAGE_GB — Hard cap on total remote storage used by PABS (in GB).
+#                         Oldest backups are pruned to stay under this limit,
+#                         but never below RCLONE_KEEP_MIN.
+#                         Set to 0 to disable storage-based pruning.
+#
+# Example — free-tier OneDrive (5 GB), always keep at least 1 backup:
+#   RCLONE_KEEP_MIN=1
+#   RCLONE_KEEP_MAX=2
+#   RCLONE_MAX_STORAGE_GB=4   # leave 1 GB headroom on the 5 GB free tier
+#
+# Example — paid remote, keep up to a month of weeklies:
+#   RCLONE_KEEP_MIN=2
+#   RCLONE_KEEP_MAX=8
+#   RCLONE_MAX_STORAGE_GB=0   # no storage cap
+RCLONE_KEEP_MIN=1
+RCLONE_KEEP_MAX=4
+RCLONE_MAX_STORAGE_GB=0
+
+# -----------------------------------------------------------------------------
+# OFFSITE ENCRYPTION
+# -----------------------------------------------------------------------------
+# Encrypts all offsite data using rclone's built-in crypt remote. The crypt
+# layer is created automatically at runtime — no extra rclone config steps
+# needed. Your base remote (RCLONE_REMOTE) is configured once normally; PABS
+# wraps it transparently when a password is set.
+#
+# This means you do not need to trust your cloud provider with your data.
+# The provider sees only opaque encrypted blobs — filenames are encrypted too.
+#
+# RCLONE_ENCRYPTION_PASSWORD — Main passphrase. Leave empty to disable encryption.
+#                              Required to restore: store this passphrase safely
+#                              (e.g. in a password manager), separately from the
+#                              USB backup itself.
+#
+# RCLONE_ENCRYPTION_SALT     — Optional second passphrase (rclone "password2").
+#                              Protects against rainbow-table attacks on the main
+#                              password. Recommended if you use a short password.
+#                              Leave empty to skip (still secure with a strong
+#                              main password).
+#
+# ⚠  These values are automatically REDACTED in the config.sh copy written to
+#    USB, so they do not travel with the local backup.
+RCLONE_ENCRYPTION_PASSWORD=""
+RCLONE_ENCRYPTION_SALT=""
+
 # =============================================================================
 # INTERNAL VARS — do not edit below this line
 # =============================================================================
 
-SCRIPT_VERSION="3.3"
+SCRIPT_VERSION="3.4"
 DATE=$(date +"%Y-%m-%d_%H-%M-%S")
 
 BACKUP_ROOT="$USB_MOUNT/proxmox-backup"

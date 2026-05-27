@@ -1,8 +1,42 @@
 # PABS — Proxmox Automated Backup System
 
 Backs up a Proxmox node's configuration, VM/CT definitions, network settings,
-cron jobs, SSH keys, package state, and Minecraft weekly archives to a USB
-stick. Designed to be power-loss safe and restore-ready out of the box.
+cron jobs, SSH keys, firewall rules, package state, and per-VM restore bundles
+to a USB stick — then optionally syncs to a cloud or SFTP remote.
+
+Designed to be **power-loss safe**, **restore-ready out of the box**, and
+**configurable entirely from one file** (`config.sh`) without ever touching
+library or agent code.
+
+---
+
+## How it works
+
+```
+Proxmox host
+│
+├── config.sh          ← the only file you edit
+├── backup.sh          ← run this (or schedule via cron)
+│
+│   1. Pre-flight checks (USB mounted, space, UUID)
+│   2. Stage everything on local SSD  ──→  /var/tmp/pabs-stage/.tmp-<date>/
+│   3. Generate + verify SHA256 manifest on SSD
+│   4. Atomic rsync to USB           ──→  /mnt/backup-usb/proxmox-backup/<date>/
+│   5. Re-verify manifest on USB
+│   6. Sync to offsite remote        ──→  gdrive:/proxmox-backup/<date>/  (optional)
+│   7. Rotate old backups
+│
+└── vm-agent/          ← deployed once to each VM via install-agent.sh
+    │   Called over SSH during step 2 — produces a self-contained .tar.zst bundle
+    └── types/
+        ├── docker.sh      compose files, .env, volumes, daemon config
+        ├── haos.sh        native HA snapshot (.tar) via ha CLI
+        ├── minecraft.sh   weekly archives from minecraft-server-setup
+        └── generic.sh     /etc, cron, scripts, packages (Pi-hole, AdGuard, etc.)
+```
+
+Each completed backup contains a self-contained `proxmox-restore.sh` and
+`DISASTER-RECOVERY.md` — no dependency on this repository at restore time.
 
 ---
 
@@ -10,160 +44,136 @@ stick. Designed to be power-loss safe and restore-ready out of the box.
 
 ```
 pabs/
-├── backup.sh              Entry point — run this (or schedule it in cron)
+├── backup.sh              Entry point — run this or schedule with cron
 ├── config.sh              Your configuration — the only file you need to edit
 ├── install-agent.sh       One-time setup: deploys the VM agent to a VM over SSH
-├── pabs-status.sh         Health check — shows USB, backup state, VM reachability
-├── INTEGRATION.md         Step-by-step guide for adding VM agent support
+├── pabs-status.sh         Health check — USB, backup state, VM reachability, offsite
+├── docs/
+│   ├── configuration.md   Every config.sh variable documented in full
+│   ├── vm-agents.md       How to set up and configure VM/LXC agent backups
+│   ├── offsite.md         Cloud and SFTP offsite sync with encryption
+│   ├── restore.md         Step-by-step restore and disaster recovery procedures
+│   └── architecture.md   Design decisions, data flow, and integrity guarantees
+├── lib/
+│   ├── core.sh            Logging, lock, trap, alerts, offsite sync
+│   ├── preflight.sh       Pre-flight checks (USB, space)
+│   └── sections.sh        The 8 backup sections
+├── helpers/
+│   ├── manifest.sh        SHA256 manifest generation, verification, rotation
+│   └── output.sh          Generates restore script, README, DR playbook per backup
 ├── tests/
 │   └── pabs.bats          Automated test suite (requires bats-core)
-├── lib/
-│   ├── core.sh            Logging, lock management, trap, notifications, offsite sync
-│   ├── preflight.sh       Pre-flight validation (USB, space checks)
-│   ├── sections.sh        The 8 backup sections and their helper functions
-│   ├── manifest.sh        SHA256 manifest generation/verification and rotation
-│   └── output.sh          Generates the restore script and README in each backup
-└── vm-agent/              Agent deployed to each VM/LXC for lightweight backups
-    ├── agent.sh           Entry point — called by PABS over SSH
+└── vm-agent/
+    ├── agent.sh           Runs inside the VM — auto-detects type, produces bundle
     └── types/
-        ├── docker.sh      Docker VMs (with or without a manager like Dockge/Portainer)
-        ├── haos.sh        Home Assistant OS (triggers native HA snapshot)
-        ├── minecraft.sh   Minecraft VMs (works with minecraft-server-setup)
-        └── generic.sh     All other VMs and LXCs (Pi-hole, AdGuard, plain Debian, etc.)
+        ├── docker.sh
+        ├── haos.sh
+        ├── minecraft.sh
+        └── generic.sh
 ```
-
-Every completed backup on the USB also contains a self-contained
-`proxmox-restore.sh` — no dependency on this repository at restore time.
 
 ---
 
-## Setup
+## Quick start
 
-### 1. Install the scripts
+### 1. Install
 
 ```bash
 git clone <repo> /opt/pabs
-chmod +x /opt/pabs/backup.sh
+chmod +x /opt/pabs/backup.sh /opt/pabs/install-agent.sh /opt/pabs/pabs-status.sh
 ```
 
-Or copy the `pabs/` directory wherever you prefer. The scripts resolve their
-own location at runtime, so they work from any path.
+### 2. Configure
 
-### 2. Edit config.sh
-
-Open `config.sh` and fill in:
-
-| Variable | What to set |
-|---|---|
-| `USB_MOUNT` | Mount point of your USB stick |
-| `TARGET_UUID` | UUID of the USB partition (`blkid /dev/sdX1`) |
-| `VM_AGENTS` | List of VMs/LXCs to back up via the agent (leave empty to skip) |
-| `VM_SSH_KEY` | Shared SSH key for VM agent connections (leave empty for default) |
-| `DISCORD_WEBHOOK` | Discord webhook URL for alerts (leave empty to disable) |
-| `NOTIFY_EMAIL` | Fallback email for failure alerts (leave empty to disable) |
-| `RCLONE_REMOTE` | rclone remote + path for offsite sync (leave empty to disable) |
-
-Everything else has sensible defaults.
-
-### 3. Set up VM agent backups (optional)
-
-PABS can back up your VMs and LXCs with a lightweight agent — collecting only
-what's needed to restore each one, not full disk images. Supported types:
-
-| VM type | What gets backed up |
-|---|---|
-| **Docker VM** | All `docker-compose.yml` + `.env` files, Docker daemon config, package list. Works with or without a manager (Dockge, Portainer). |
-| **Home Assistant OS** | Full native HA snapshot (`.tar`) via the `ha` CLI — one-click restore via the HA UI. |
-| **Generic LXC / VM** | `/etc` (full), cron jobs, scripts, package list. Covers Pi-hole, AdGuard, Nginx, and any plain Debian/Ubuntu service. |
-
-**Deploy the agent to each VM:**
+Edit `config.sh` — it is the **only file you need to touch**. At minimum, set:
 
 ```bash
-# From the Proxmox host — run once per VM/LXC
-chmod +x /opt/pabs/install-agent.sh
-/opt/pabs/install-agent.sh root@<vm-ip>
-
-# With a dedicated SSH key (recommended)
-/opt/pabs/install-agent.sh root@<vm-ip> --key /root/.ssh/id_ed25519_pabs_agent
+USB_MOUNT="/mnt/backup-usb"
+TARGET_UUID=""        # get with: blkid /dev/sdX1  (leave empty to skip UUID check)
 ```
 
-This copies `vm-agent/` to the VM, installs dependencies, and prints the
-`VM_AGENTS` line to add to `config.sh`. Then review `/etc/pabs-agent/config`
-on the VM to adjust any type-specific settings.
+See [`docs/configuration.md`](docs/configuration.md) for every option.
 
-**Add VMs to config.sh:**
+### 3. Mount the USB stick
 
 ```bash
-VM_AGENTS=(
-    "docker-vm    192.168.1.10   root    /opt/pabs-agent/agent.sh"
-    "haos         192.168.1.20   root    /opt/pabs-agent/agent.sh"
-    "pihole-lxc   192.168.1.30   root    /opt/pabs-agent/agent.sh"
-)
-```
-
-See `INTEGRATION.md` for the full setup guide, all configuration options,
-and how to integrate the new section into the existing PABS scripts.
-
-### 4. Mount your USB stick
-
-```bash
-# Find the device
-lsblk
-
-# Mount it
 mount /dev/sdX1 /mnt/backup-usb
-
-# Or add to /etc/fstab for auto-mount:
-# UUID=<your-uuid>  /mnt/backup-usb  vfat  defaults,nofail  0  0
 ```
 
-### 5. Test run
+For automatic mount at boot, add to `/etc/fstab`:
+```
+UUID=<your-uuid>  /mnt/backup-usb  vfat  defaults,nofail  0  0
+```
+
+### 4. Test run
 
 ```bash
-/opt/pabs/backup.sh
+/opt/pabs/backup.sh --dry-run    # checks only, no data written
+/opt/pabs/backup.sh              # full backup
 ```
 
-Check `/mnt/backup-usb/proxmox-backup/backup.log` for results.
+Logs go to `/mnt/backup-usb/proxmox-backup/backup.log`.
 
-### 6. Schedule with cron
+### 5. Schedule with cron
 
 ```bash
 crontab -e
 ```
 
-Add (runs every Sunday at 03:00):
-
 ```
+# Run every Sunday at 03:00
 0 3 * * 0 /opt/pabs/backup.sh
 ```
 
+### 6. Add VM agent backups (optional)
+
+Deploy the agent to each VM once — all configuration is passed from the
+Proxmox host via `--set`, no SSH-in-and-edit required afterwards:
+
+```bash
+# Standard VM — auto-detect type, use defaults
+./install-agent.sh root@192.168.1.10
+
+# Minecraft VM with a non-default user and path
+./install-agent.sh alice@192.168.1.40 \
+    --set MINECRAFT_BASE=/home/alice/servers/backups \
+    --set MINECRAFT_SERVER_BASE=/home/alice/servers
+
+# Docker VM with Portainer
+./install-agent.sh root@192.168.1.20 \
+    --set DOCKER_MANAGER=portainer \
+    --set PORTAINER_TOKEN=ptr_abc123
+```
+
+Then add each VM to `config.sh`:
+
+```bash
+VM_AGENTS=(
+    "docker-vm    192.168.1.10   root     /opt/pabs-agent/agent.sh"
+    "haos         192.168.1.20   root     /opt/pabs-agent/agent.sh"
+    "mc-server    192.168.1.40   alice    /opt/pabs-agent/agent.sh"
+)
+```
+
+See [`docs/vm-agents.md`](docs/vm-agents.md) for the full guide.
+
 ### 7. Set up offsite sync (optional, recommended)
 
-PABS implements the **3-2-1 backup principle**: local SSD (staging) → USB stick → offsite. The third copy is handled by rclone and runs automatically after each successful backup.
-
-**Install rclone:**
 ```bash
 apt install rclone
+rclone config    # set up Google Drive, OneDrive, Backblaze, etc.
 ```
 
-**Configure a remote** (interactive wizard):
+In `config.sh`:
+
 ```bash
-rclone config
+RCLONE_REMOTE="gdrive:proxmox-backup"
+RCLONE_KEEP_MIN=1
+RCLONE_MAX_STORAGE_GB=14    # stay within Google Drive's 15 GB free tier
+RCLONE_ENCRYPTION_PASSWORD="a strong passphrase"
 ```
 
-Common choices for a Homelab:
-- **Backblaze B2** — cheap object storage (~$0.006/GB/month), simple setup
-- **Hetzner Storage Box** — SFTP, good EU option, fixed pricing
-- **Wasabi** — S3-compatible, no egress fees
-- **Local NAS / second server** — use `sftp` or `local` remote type
-
-**Set in config.sh:**
-```bash
-RCLONE_REMOTE="backblaze:my-bucket/proxmox-backup"
-RCLONE_EXTRA_OPTS="--bwlimit 5M"   # optional: cap upload speed
-```
-
-Each backup run syncs only the new backup directory. Old offsite copies are not touched by PABS — manage retention on the remote side via your provider's lifecycle rules or `rclone delete`.
+See [`docs/offsite.md`](docs/offsite.md) for the full guide.
 
 ### 8. Health check
 
@@ -171,145 +181,68 @@ Each backup run syncs only the new backup directory. Old offsite copies are not 
 /opt/pabs/pabs-status.sh
 ```
 
-Checks without running a backup: USB mounted, most recent backup with manifest integrity, all VM agents reachable, offsite remote reachable, local stage space. Returns exit 0 (OK), 1 (error), or 2 (warning). Use with `--json` for monitoring integration.
-
-### Minecraft integration
-
-PABS backs up Minecraft via the VM agent (type=`minecraft`), designed to work
-in tandem with **[LetsGaming/minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup)**.
-
-Deploy the agent to the Minecraft VM the same way as any other VM:
-
-```bash
-./install-agent.sh root@<mc-vm-ip>
-```
-
-Then add it to `VM_AGENTS` in `config.sh`:
-
-```bash
-VM_AGENTS=(
-    "minecraft-vm  192.168.1.40  minecraft  /opt/pabs-agent/agent.sh"
-)
-```
-
-The agent auto-detects the type as `minecraft` (looks for the `minecraft` system
-user and the default `minecraft-server-setup` directory layout). It backs up:
-
-- Weekly `.tar.zst` archives produced by `minecraft-server-setup` (age-gated to
-  avoid in-progress files)
-- `server.properties`, `ops.json`, `whitelist.json`, `banned-*.json`
-- `mods/` and `plugins/` directories
-- Optionally daily archives (set `MC_KEEP_DAILY` in `/etc/pabs-agent/config`)
-
-All options (`MINECRAFT_BASE`, keep counts, age-gate, daily archives) are
-configured in `/etc/pabs-agent/config` on the Minecraft VM itself — the
-defaults match an unmodified `minecraft-server-setup` install without any
-changes needed.
-
----
-
-## Restoring from a backup
-
-The USB contains a self-contained restore script inside each backup folder:
-
-```bash
-# Mount the USB on the new/recovered system
-mount /dev/sdX1 /mnt/backup-usb
-
-# Navigate to the backup you want
-cd /mnt/backup-usb/proxmox-backup/2025-06-01_03-00
-
-# Run the interactive restore
-chmod +x proxmox-restore.sh
-./proxmox-restore.sh
-
-# Dry-run mode (no changes made)
-./proxmox-restore.sh --dry-run
-
-# Restore only one section
-./proxmox-restore.sh --section ssh
-
-# If the Minecraft VM got a new IP after a rebuild
-./proxmox-restore.sh --section minecraft --mc-ip 10.0.0.50
-```
-
-**Available sections:** `configs` | `vms` | `cron` | `firewall` | `ssh` | `packages` | `scripts` | `minecraft`
-
-### Restoring VM agent bundles
-
-Each VM bundle is stored separately under `vm-agents/<label>/` and contains
-its own `restore-notes.txt` with type-specific instructions.
-
-```bash
-# Inspect a bundle without extracting
-zstd -d vm-agents/docker-vm/pabs-bundle-*.tar.zst --stdout | tar -t
-
-# Read the restore instructions
-zstd -d vm-agents/docker-vm/pabs-bundle-*.tar.zst --stdout \
-    | tar -x --to-stdout restore-notes.txt
-
-# Extract everything
-mkdir restore-docker && \
-    zstd -d vm-agents/docker-vm/pabs-bundle-*.tar.zst --stdout \
-    | tar -x -C restore-docker/
-```
-
-**HAOS:** the bundle contains a native `.tar` snapshot. Restore via
-Settings → Backups → Upload in the HA UI, or `ha backup restore <slug>` via CLI.
-
-### Verify integrity before restoring
-
-```bash
-cd /mnt/backup-usb/proxmox-backup/2025-06-01_03-00
-sha256sum --check MANIFEST.sha256
-```
+Reports: USB state, latest backup integrity, VM agent reachability, offsite
+remote status and storage usage, local stage space. Returns 0 (OK), 1 (error),
+2 (warning).
 
 ---
 
 ## What is and isn't backed up
 
-**Backed up:**
-- `/etc/pve` — Proxmox cluster/node config (tar snapshot, pmxcfs-safe)
-- VM and CT config exports (`qm config`, `pct config`)
-- `/etc/network`, `/etc/hosts`, `/etc/hostname`, `/etc/resolv.conf`
-- `/etc/apt/sources.list*`
-- Cron jobs (`/etc/crontab`, `/etc/cron.d`, user crontabs)
-- Firewall rules (nftables, iptables, Proxmox firewall)
-- SSH keys and daemon config
-- Installed package list (dpkg selections, holds)
-- Disk layout, kernel version, Proxmox version
-- ZFS pool/dataset info (if `BACKUP_ZFS="true"`)
-- `/usr/local/bin`, `/root/scripts`
-- **VM/LXC restore bundles** (if `VM_AGENTS` is configured) — compose files for Docker VMs, native snapshots for HAOS, weekly archives + server config for Minecraft, `/etc` + package list for generic LXCs
+**Proxmox host — always backed up:**
+
+| What | Where in backup |
+|---|---|
+| `/etc/pve` (cluster/node config) | `etc-pve.tar` (pmxcfs-safe tar snapshot) |
+| VM and CT configs (`qm config`, `pct config`) | `vm-ct-definitions/` |
+| Network, hosts, hostname, resolv.conf | `etc/` |
+| APT sources | `etc/apt/` |
+| Cron jobs | `etc/cron*`, `var/spool/cron/` |
+| Firewall rules (nftables, iptables, PVE) | `etc/nftables.conf`, `etc/iptables/`, `etc/pve/firewall/` |
+| SSH keys and daemon config | `etc/ssh/`, `root/.ssh/` |
+| Installed packages (dpkg selections + holds) | `system-state/` |
+| Disk layout, kernel version, Proxmox version | `system-state/` |
+| ZFS pool/dataset info (if `BACKUP_ZFS=true`) | `system-state/zfs-*` |
+| LVM VG configs (restorable with vgcfgrestore) | `system-state/lvm-*` |
+| `/usr/local/bin`, `/root/scripts` | preserved path |
+| `backup.sh` and `config.sh` (secrets redacted) | `backup.sh`, `config.sh` |
+
+**VM/LXC agent bundles — backed up when `VM_AGENTS` is configured:**
+
+| VM type | What's in the bundle |
+|---|---|
+| Docker | All `docker-compose.yml` + `.env` files, Docker daemon config, named volumes (under threshold), package list |
+| Home Assistant OS | Full native HA snapshot (`.tar`) — one-click restore via HA UI |
+| Minecraft | Weekly `.tar.zst` archives from `minecraft-server-setup`, `server.properties`, ops/whitelist/banned, mods, plugins |
+| Generic | `/etc` (full), cron jobs, `/usr/local/bin`, `/root/scripts`, package list |
 
 **Not backed up:**
-- VM and CT disk images — **not needed**. Agent bundles (see above) contain the full application state for each VM and replace `vzdump`. For disaster recovery: fresh OS install → deploy agent → restore bundle. See `DISASTER-RECOVERY.md` (generated inside each backup) for the full procedure.
-- Docker container data volumes beyond the auto-include size threshold (configurable per VM in `/etc/pabs-agent/config`)
-- Minecraft world data directly — the agent copies the `.tar.zst` archives produced by `minecraft-server-setup`; world data is whatever that tool chose to include
+
+- VM and CT disk images — not needed. Agent bundles contain full application state. Rebuild path: fresh OS → `install-agent.sh` → restore bundle. See [`docs/restore.md`](docs/restore.md).
+- Docker volumes over the auto-include size threshold (configurable; opt-in via `DOCKER_INCLUDE_VOLUMES`)
+- Minecraft world data directly — the agent copies archives that `minecraft-server-setup` already produced
 
 ---
 
 ## Key design properties
 
-- **Staging on local SSD first** — the USB drive sees one sequential write at the end, minimising flash wear and corruption risk from interrupted writes
-- **UUID targeting** — won't write to the wrong drive if a different USB is mounted
-- **Pre-commit integrity check** — SHA256 manifest is verified on local SSD before any data reaches the USB; a corrupt staging write aborts cleanly
-- **Atomic commit** — data is written to `<date>.tmp/` then renamed; a partial transfer never appears as a complete backup
-- **Post-transfer verification** — manifest is re-checked on the USB after transfer
-- **Auto space recovery** — purges the oldest backup if the USB is full, refuses if it's the last one
+- **Staging on local SSD first** — USB sees one sequential write, minimising flash wear and corruption risk
+- **UUID targeting** — refuses to write to any drive other than the configured one
+- **Pre-commit integrity check** — SHA256 manifest verified on local SSD before any data reaches USB
+- **Atomic commit** — written to `<date>.tmp/` then renamed; a partial transfer never appears as complete
+- **Post-transfer verification** — manifest re-checked on USB after transfer
+- **Auto space recovery** — purges the oldest backup if USB is full; refuses if it's the last copy
 - **Dual-channel alerts** — Discord webhook (primary) + local mail (fallback)
-- **3-2-1 offsite sync** — optional rclone sync to a remote after each commit; non-fatal on failure, USB backup always intact
+- **3-2-1 offsite sync** — optional rclone sync with retention limits and transparent encryption
 
 ---
 
-## Planned features
+## Documentation
 
-These are tracked but not yet implemented. PRs welcome.
-
-**Encryption at rest (`age`)** — Encrypt each backup directory on the USB with a public key (`age`). The private key lives outside the USB medium — losing the key means losing access to the backup. Needs careful key-backup documentation before this is useful in a DR scenario.
-
-**GFS retention** — Grandfather-Father-Son rotation (`KEEP_DAILY` / `KEEP_WEEKLY` / `KEEP_MONTHLY`) instead of the current simple `KEEP_BACKUPS` count. Low priority for a Homelab with weekly backups and a single USB stick.
-
-**Incremental hardlink snapshots** — `rsync --link-dest` to avoid re-copying unchanged files between backup runs. Meaningful only if the USB is large enough to hold many snapshots; not worth the complexity otherwise.
-
-**JSONL manifest** — Machine-readable `MANIFEST.jsonl` alongside `MANIFEST.sha256` for diffing between backup versions and selective restore. Nice to have, adds no DR value.
+| Doc | Contents |
+|---|---|
+| [`docs/configuration.md`](docs/configuration.md) | Every `config.sh` variable with type, default, and examples |
+| [`docs/vm-agents.md`](docs/vm-agents.md) | Agent setup, `--set` flags, per-type config reference |
+| [`docs/offsite.md`](docs/offsite.md) | Cloud remotes, free-tier sizing, encryption, retention |
+| [`docs/restore.md`](docs/restore.md) | Restore procedures, DR walkthrough, bundle extraction |
+| [`docs/architecture.md`](docs/architecture.md) | Data flow, integrity guarantees, design decisions |
