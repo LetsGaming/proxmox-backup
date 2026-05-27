@@ -174,9 +174,10 @@ section_system_state() {
     backup_path "/etc/fstab" "fstab"
 
     if [[ "$BACKUP_ZFS" == "true" ]]; then
-        backup_cmd_output "$s/zfs-pool-status.txt"  "ZFS pool status"   zpool status
-        backup_cmd_output "$s/zfs-pool-list.txt"    "ZFS pool list"     zpool list -v
-        backup_cmd_output "$s/zfs-dataset-list.txt" "ZFS dataset list"  zfs list -t all
+        backup_cmd_output "$s/zfs-pool-status.txt"       "ZFS pool status"              zpool status
+        backup_cmd_output "$s/zfs-pool-status-by-id.txt" "ZFS pool status (by-id paths)" zpool status -P
+        backup_cmd_output "$s/zfs-pool-list.txt"         "ZFS pool list"                zpool list -v
+        backup_cmd_output "$s/zfs-dataset-list.txt"      "ZFS dataset list"             zfs list -t all
 
         local zfs_dir="$STAGE_DIR/$s/zfs-configs"
         mkdir -p "$zfs_dir"
@@ -186,6 +187,17 @@ section_system_state() {
                 && log "  ✓ ZFS pool properties: $pool" \
                 || log_warn "ZFS pool property export failed: $pool"
         done < <(zpool list -H -o name 2>/dev/null)
+    fi
+
+    # LVM — export human-readable summaries and a machine-readable vgcfgbackup
+    # that can be restored with: vgcfgrestore -f lvm-vg-<name>.cfg <vg-name>
+    if command -v vgs &>/dev/null && vgs &>/dev/null 2>/dev/null; then
+        backup_cmd_output "$s/lvm-pvs.txt" "LVM physical volumes" pvs  --units b --nosuffix
+        backup_cmd_output "$s/lvm-vgs.txt" "LVM volume groups"    vgs  --units b --nosuffix
+        backup_cmd_output "$s/lvm-lvs.txt" "LVM logical volumes"  lvs  --units b --nosuffix
+        vgcfgbackup -f "$STAGE_DIR/$s/lvm-vg-%s.cfg" 2>>"$LOG" \
+            && log "  ✓ LVM VG configs (machine-readable, restorable with vgcfgrestore)" \
+            || log_warn "LVM vgcfgbackup failed (non-fatal — may require root or lvm2 installed)"
     fi
 }
 
@@ -270,7 +282,7 @@ section_vm_agents() {
         # Step 1: Run the agent on the remote host
         log "    Running agent on $vm_host..."
         if ! ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
-                "$agent_path --bundle-output $remote_bundle" 2>>"$LOG"; then
+                "$agent_path" "--bundle-output" "$remote_bundle" 2>>"$LOG"; then
             log_err "  [$label] Agent failed on $vm_host"
             (( total_fail++ )) || true
             # Clean up any partial bundle left on the remote
@@ -281,7 +293,7 @@ section_vm_agents() {
 
         # Step 2: Rsync the bundle back to local staging
         log "    Pulling bundle from $vm_host..."
-        if rsync -a -e "ssh ${ssh_opts[*]}" \
+        if rsync -a -e "ssh ${ssh_opts[*]@Q}" \
                 "$ssh_user@$vm_host:$remote_bundle" "$local_dest/" 2>>"$LOG"; then
             local size_kb
             size_kb=$(du -sk "$local_dest/$(basename "$remote_bundle")" 2>/dev/null | cut -f1)

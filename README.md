@@ -243,7 +243,7 @@ sha256sum --check MANIFEST.sha256
 - **VM/LXC restore bundles** (if `VM_AGENTS` is configured) — compose files for Docker VMs, native snapshots for HAOS, weekly archives + server config for Minecraft, `/etc` + package list for generic LXCs
 
 **Not backed up:**
-- VM and CT disk images — use Proxmox's built-in `vzdump` for those
+- VM and CT disk images — **not needed**. Agent bundles (see above) contain the full application state for each VM and replace `vzdump`. For disaster recovery: fresh OS install → deploy agent → restore bundle. See `DISASTER-RECOVERY.md` (generated inside each backup) for the full procedure.
 - Docker container data volumes beyond the auto-include size threshold (configurable per VM in `/etc/pabs-agent/config`)
 - Minecraft world data directly — the agent copies the `.tar.zst` archives produced by `minecraft-server-setup`; world data is whatever that tool chose to include
 

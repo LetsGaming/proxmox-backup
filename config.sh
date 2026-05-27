@@ -105,7 +105,11 @@ VM_AGENT_KEEP_BUNDLES=2
 
 # SSH options applied to every VM agent connection.
 # Adjust ConnectTimeout if VMs are slow to respond.
-VM_AGENT_SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
+# StrictHostKeyChecking=yes is used for cron safety (TOFU attack prevention).
+# Run install-agent.sh to register host keys in /root/.ssh/pabs_known_hosts first.
+VM_AGENT_SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 \
+                   -o StrictHostKeyChecking=yes \
+                   -o UserKnownHostsFile=/root/.ssh/pabs_known_hosts)
 
 # -----------------------------------------------------------------------------
 # NOTIFICATIONS
@@ -125,14 +129,16 @@ NOTIFY_EMAIL=""
 # -----------------------------------------------------------------------------
 
 # Set to "true" to export ZFS pool/dataset layout into system-state/
-BACKUP_ZFS="false"
+# Default is "true" because ZFS is the standard Proxmox installer choice since PVE 6.x.
+# Set to "false" only on setups that do not use ZFS at all.
+BACKUP_ZFS="true"
 
 # =============================================================================
 # INTERNAL VARS — do not edit below this line
 # =============================================================================
 
 SCRIPT_VERSION="3.3"
-DATE=$(date +"%Y-%m-%d_%H-%M")
+DATE=$(date +"%Y-%m-%d_%H-%M-%S")
 
 BACKUP_ROOT="$USB_MOUNT/proxmox-backup"
 STAGE_DIR="$LOCAL_STAGE_BASE/.tmp-$DATE"

@@ -51,6 +51,14 @@ verify_manifest_on_usb() {
 # -----------------------------------------------------------------------------
 
 rotate_old_backups() {
+    # Guard against invalid values — KEEP_BACKUPS must be a positive integer.
+    # head -n -0 is undefined behaviour on some GNU coreutils versions and would
+    # mark ALL backups for deletion.
+    if ! [[ "$KEEP_BACKUPS" =~ ^[1-9][0-9]*$ ]]; then
+        log_warn "KEEP_BACKUPS='$KEEP_BACKUPS' is not a valid integer > 0 — rotation skipped"
+        return
+    fi
+
     log "Rotating old backups (keeping last $KEEP_BACKUPS)..."
 
     mapfile -t old_backups < <(

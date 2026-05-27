@@ -118,6 +118,7 @@ trap '_on_exit' ERR EXIT
 
 generate_restore_script
 generate_readme
+generate_dr_playbook
 sync
 
 # Belt-and-suspenders: re-verify the manifest against what landed on USB

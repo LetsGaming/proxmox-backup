@@ -13,7 +13,8 @@
 # What it does:
 #   1. Copies vm-agent/ to the target (default: /opt/pabs-agent)
 #   2. Runs agent.sh --install on the target (creates /etc/pabs-agent/config)
-#   3. Prints the VM_AGENTS line to add to PABS config.sh
+#   3. Registers the host key in /root/.ssh/pabs_known_hosts (used by cron backups)
+#   4. Prints the VM_AGENTS line to add to PABS config.sh
 # =============================================================================
 
 set -euo pipefail
@@ -22,7 +23,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_SOURCE="$SCRIPT_DIR/vm-agent"
 REMOTE_DIR="/opt/pabs-agent"
 SSH_KEY=""
-SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+PABS_KNOWN_HOSTS="/root/.ssh/pabs_known_hosts"
+# accept-new is appropriate here (first contact); cron backups use StrictHostKeyChecking=yes
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+          -o UserKnownHostsFile="$PABS_KNOWN_HOSTS")
 
 usage() {
     echo "Usage: $0 <user@host> [--dir /remote/path] [--key /path/to/key]"
@@ -79,6 +83,19 @@ rrun "chmod 644 $REMOTE_DIR/types/*.sh"
 # --- Run install mode on remote ---
 log "Running agent --install on $TARGET ..."
 rrun "$REMOTE_DIR/agent.sh --install"
+
+# --- Register host key in pabs_known_hosts ---
+# This enables StrictHostKeyChecking=yes in cron backups (config.sh: VM_AGENT_SSH_OPTS)
+log "Registering host key in $PABS_KNOWN_HOSTS ..."
+HOST_PART="${TARGET##*@}"
+mkdir -p "$(dirname "$PABS_KNOWN_HOSTS")"
+touch "$PABS_KNOWN_HOSTS"
+chmod 600 "$PABS_KNOWN_HOSTS"
+# Remove any stale entry for this host first, then add the current key
+ssh-keygen -R "$HOST_PART" -f "$PABS_KNOWN_HOSTS" 2>/dev/null || true
+ssh-keyscan -H "$HOST_PART" >> "$PABS_KNOWN_HOSTS" 2>/dev/null \
+    && log "  ✓ Host key registered for $HOST_PART" \
+    || log "  ⚠ ssh-keyscan failed — add the key manually or re-run install-agent.sh"
 
 # --- Detect type for the config hint ---
 log ""

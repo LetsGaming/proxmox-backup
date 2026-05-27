@@ -21,7 +21,9 @@ log_warn() {
 
 log_err() {
     log "✗  $*"
-    (( ERRORS++ )) || true
+    # Use the same safe-increment pattern as log_warn:
+    # (( ERRORS++ )) returns exit 1 when ERRORS is 0, which would abort under set -e.
+    : $(( ERRORS++ ))
 }
 
 die() {
