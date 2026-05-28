@@ -1,92 +1,83 @@
 # PABS Integration Guide
 
-## Adding a VM or LXC to the agent system
-
-PABS backs up VMs and containers by SSHing into each one, running a small
-agent script, and pulling the resulting bundle back to the Proxmox host. No
-extra software is required on the recovery machine — each bundle is
-self-contained with a `restore-notes.txt`.
-
-### Step 1 — Install the agent on the VM
-
-From the Proxmox host, run:
-
-```bash
-bash install-agent.sh <ip-or-hostname> <ssh-user>
-```
-
-This copies `vm-agent/agent.sh` and the type handlers to
-`/opt/pabs-agent/` on the target machine and sets correct permissions.
-
-### Step 2 — Verify the agent
-
-SSH into the VM and do a test run:
-
-```bash
-ssh <user>@<vm-ip> sudo /opt/pabs-agent/agent.sh --dry-run
-```
-
-You should see the agent detect its type (docker / haos / minecraft / generic)
-and print what it would back up. Fix any errors before continuing.
-
-### Step 3 — Add the VM to config.sh on the Proxmox host
-
-Open `config.sh` and add an entry to the `VM_AGENTS` array:
-
-```bash
-VM_AGENTS=(
-    # Format: "label  ip-or-hostname  ssh-user  agent-path"
-    "homeassistant  10.0.0.10  root    /opt/pabs-agent/agent.sh"
-    "minecraft-vm   10.0.0.11  mcuser  /opt/pabs-agent/agent.sh"
-    "docker-host    10.0.0.12  ubuntu  /opt/pabs-agent/agent.sh"
-)
-```
-
-The label is used as the directory name under `vm-agents/` in each backup.
-
-### Step 4 — Run PABS and confirm
-
-```bash
-sudo bash backup.sh
-```
-
-After completion, check that `vm-agents/<label>/<label>.tar.zst` exists on
-the USB stick and that `README.txt` lists the `vm-agents/` directory.
+> **This file is a quick-reference summary.** The full documentation has moved
+> to the `docs/` folder:
+>
+> - **[docs/vm-agents.md](docs/vm-agents.md)** — complete agent setup guide, `--set` flags, per-type config reference
+> - **[docs/configuration.md](docs/configuration.md)** — every `config.sh` variable documented
+> - **[docs/offsite.md](docs/offsite.md)** — cloud sync, encryption, free-tier sizing
+> - **[docs/restore.md](docs/restore.md)** — restore procedures and DR walkthrough
+> - **[docs/architecture.md](docs/architecture.md)** — data flow and design decisions
 
 ---
 
-## Type-specific configuration
+## Adding a VM or LXC — quick reference
 
-Each agent type has config variables you can set in the agent's environment
-(via `/etc/pabs-agent/config` on the VM, created by `install-agent.sh`):
+### 1. Deploy the agent
 
-| Type      | Key variables                                                             |
-|-----------|---------------------------------------------------------------------------|
-| docker    | `DOCKER_MANAGER`, `PORTAINER_TOKEN`, `PORTAINER_URL`, `DOCKER_VOLUME_MAX_MB` |
-| haos      | `HAOS_WAIT_SECONDS`, `HAOS_KEEP_SNAPSHOTS`                               |
-| minecraft | `MC_INSTANCES_DIR`, `MC_KEEP_WEEKLY`, `MC_KEEP_DAILY`, `MC_MIN_AGE_MINUTES` |
-| generic   | `GENERIC_PATHS`, `GENERIC_EXCLUDE_PATHS`                                  |
+```bash
+# From the Proxmox host — run once per VM/LXC
+./install-agent.sh root@<vm-ip>
 
-See the comments at the top of each `vm-agent/types/<type>.sh` for full
-documentation.
+# With a dedicated SSH key
+./install-agent.sh root@<vm-ip> --key /root/.ssh/id_ed25519_pabs_agent
+
+# Pass configuration values — no SSH into the VM needed afterwards
+./install-agent.sh alice@<mc-vm-ip> \
+    --set MINECRAFT_BASE=/home/alice/minecraft-server/backups \
+    --set MINECRAFT_SERVER_BASE=/home/alice/minecraft-server
+
+./install-agent.sh root@<docker-vm-ip> \
+    --set DOCKER_MANAGER=portainer \
+    --set PORTAINER_TOKEN=ptr_abc123
+```
+
+`install-agent.sh` copies the agent files, runs first-time setup on the VM,
+applies any `--set` values into `/etc/pabs-agent/config`, registers the SSH
+host key, and prints the `VM_AGENTS` line to add to `config.sh`.
+
+### 2. Add to config.sh
+
+```bash
+VM_AGENTS=(
+    "docker-vm    192.168.1.10   root     /opt/pabs-agent/agent.sh"
+    "haos         192.168.1.20   root     /opt/pabs-agent/agent.sh"
+    "pihole-lxc   192.168.1.30   root     /opt/pabs-agent/agent.sh"
+    "mc-server    192.168.1.40   alice    /opt/pabs-agent/agent.sh"
+)
+```
+
+### 3. Test
+
+```bash
+sudo /opt/pabs/backup.sh --dry-run
+sudo /opt/pabs/backup.sh
+```
+
+---
+
+## Type-specific `--set` flags — quick reference
+
+| Type | Key variables |
+|---|---|
+| `docker` | `DOCKER_MANAGER` (`auto`/`none`/`dockge`/`portainer`), `DOCKGE_STACKS_DIR`, `PORTAINER_TOKEN`, `PORTAINER_URL`, `DOCKER_INCLUDE_VOLUMES` |
+| `haos` | `HAOS_BACKUP_TYPE` (`full`/`partial`), `HAOS_BACKUP_PASSWORD`, `HAOS_KEEP_ON_HOST`, `HAOS_WAIT_SECONDS` |
+| `minecraft` | `MINECRAFT_BASE`, `MINECRAFT_SERVER_BASE`, `MC_KEEP_WEEKLY`, `MC_KEEP_DAILY`, `MC_MIN_AGE_MINUTES` |
+| `generic` | `EXTRA_PATHS`, `GENERIC_EXCLUDE_PATHS`, `GENERIC_INCLUDE_ETC`, `GENERIC_INCLUDE_PACKAGES` |
+| all types | `PABS_TYPE` (override auto-detection), `AGENT_LABEL`, `EXTRA_PATHS` |
+
+See [docs/vm-agents.md](docs/vm-agents.md) for the full per-type reference.
 
 ---
 
 ## SSH host key setup
 
-On the first connection to each VM, PABS uses `StrictHostKeyChecking=accept-new`
-so it can run unattended without pre-populating `known_hosts`. This means the
-**first connection provides no MITM protection**.
+`install-agent.sh` registers each VM's host key in `/root/.ssh/pabs_known_hosts`
+automatically, enabling `StrictHostKeyChecking=yes` in cron runs.
 
-After initial setup, harden this:
+If a VM's host key changes (e.g. after OS reinstall), re-run `install-agent.sh`
+to update it:
 
-1. Verify each VM's host key fingerprint:
-   ```bash
-   ssh-keyscan <vm-ip> | ssh-keygen -lf -
-   ```
-2. Add the verified key to root's `known_hosts` on the Proxmox host:
-   ```bash
-   ssh-keyscan <vm-ip> >> /root/.ssh/known_hosts
-   ```
-3. Change `StrictHostKeyChecking=accept-new` to `StrictHostKeyChecking=yes`
-   in `VM_AGENT_SSH_OPTS` in `config.sh`.
+```bash
+./install-agent.sh root@<vm-ip>    # updates agent files + host key
+```
