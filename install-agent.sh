@@ -265,8 +265,9 @@ log "Registering VM agent in config.sh ..."
 if grep -Fq "$VM_ENTRY" "$CONFIG_FILE"; then
     log "✓ VM already present in VM_AGENTS"
 else
-    python3 - "$CONFIG_FILE" "$VM_ENTRY" << 'PYEOF'
+python3 - "$CONFIG_FILE" "$VM_ENTRY" << 'PYEOF'
 import sys
+import re
 from pathlib import Path
 
 config_path = Path(sys.argv[1])
@@ -274,11 +275,13 @@ entry = sys.argv[2]
 
 text = config_path.read_text()
 
-start = text.find("VM_AGENTS=(")
+match = re.search(r'^\s*VM_AGENTS=\(', text, re.MULTILINE)
 
-if start == -1:
+if not match:
     print("VM_AGENTS block not found", file=sys.stderr)
     sys.exit(1)
+
+start = match.start()
 
 end = text.find(")", start)
 
