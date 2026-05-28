@@ -143,6 +143,11 @@ trap - ERR EXIT
 # --inplace is intentionally NOT used: it writes in-place, leaving a
 # partial/corrupt file indistinguishable from a complete one after power loss.
 # Atomicity is provided by the .tmp → mv rename below.
+#
+# ext4 is required on the USB drive (setup wizard enforces this). It supports
+# symlinks, Unix permissions, and filesystem health checks — none of which are
+# available on exFAT/FAT32/NTFS. The preflight check warns if another filesystem
+# is detected. See docs/usb-health.md for filesystem requirements.
 if rsync -a --whole-file "$STAGE_DIR/" "$FINAL_DIR.tmp/" 2>>"$LOG"; then
     log "  Transfer complete."
 else

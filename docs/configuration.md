@@ -36,6 +36,22 @@ TARGET_UUID=""                                      # disabled — any drive at 
 TARGET_UUID="a1b2c3d4-e5f6-7890-abcd-ef1234567890" # recommended
 ```
 
+### Filesystem requirement
+
+PABS requires the USB partition to be formatted as **ext4**. exFAT, FAT32, and NTFS are not supported — the backup transfer will fail because rsync cannot create symlinks or set Unix permissions on those filesystems.
+
+The setup wizard (`setup.sh --step usb`) offers to format the drive automatically. To format manually:
+
+```bash
+umount /dev/sdX1
+mkfs.ext4 -L PABS-BACKUP -m 0 /dev/sdX1
+tune2fs -c 0 -i 0 /dev/sdX1
+```
+
+See [USB filesystem requirements](usb-health.md#filesystem-requirements) for a full comparison of supported filesystems.
+
+---
+
 ### `KEEP_BACKUPS`
 **Type:** positive integer | **Default:** `4`
 

@@ -26,6 +26,30 @@ check_usb_mounted() {
     # Write-test catches hardware read-only switches before we attempt a full backup
     touch "$USB_MOUNT/.write_test" 2>/dev/null && rm -f "$USB_MOUNT/.write_test" \
         || die "USB at $USB_MOUNT is mounted read-only."
+
+    # Filesystem capability check — warn on filesystems that cannot store symlinks
+    # or Unix permissions. exFAT/FAT32/NTFS will cause the USB rsync transfer to
+    # fail. The setup wizard offers to format to ext4; see docs/usb-health.md.
+    local usb_dev usb_fstype
+    usb_dev=$(findmnt -n -o SOURCE "$USB_MOUNT" 2>/dev/null || true)
+    if [[ -n "$usb_dev" ]]; then
+        usb_fstype=$(blkid -s TYPE -o value "$usb_dev" 2>/dev/null || true)
+        case "${usb_fstype,,}" in
+            ext2|ext3|ext4) ;;  # fully supported
+            exfat|vfat|fat32|ntfs|ntfs-3g)
+                log_warn "USB filesystem is ${usb_fstype} — PABS requires ext4."
+                log_warn "  ext4 supports symlinks, Unix permissions, and filesystem health checks."
+                log_warn "  Backups WILL FAIL during the USB transfer step on ${usb_fstype}."
+                log_warn "  Re-run the setup wizard to format the drive: bash /opt/pabs/setup.sh --step usb"
+                ;;
+            "")
+                log_warn "Could not detect USB filesystem type — proceeding cautiously"
+                ;;
+            *)
+                log_warn "USB filesystem is ${usb_fstype} — ext4 is recommended for full PABS support"
+                ;;
+        esac
+    fi
 }
 
 # Shared helper: estimate the total KB we expect to back up this run.

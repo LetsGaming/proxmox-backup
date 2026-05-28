@@ -11,7 +11,59 @@ _step_usb() {
     lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,LABEL 2>/dev/null | head -30 | sed 's/^/    /'
     echo ""
     _info "Identify your USB drive above (look for a small removable disk)."
-    _info "The USB should be formatted as ext4 or exFAT before proceeding."
+    _info "PABS requires ext4 — it is the only format that supports symlinks,"
+    _info "Unix permissions, and filesystem health checks. See docs/usb-health.md."
+
+    # --- Format ---
+    _step "Format USB drive"
+    _info "If your drive is already formatted as ext4 you can skip this step."
+    _info "Formatting will ERASE ALL DATA on the selected partition."
+    echo ""
+    if _ask_yn "Format a partition as ext4 now?" "n"; then
+        _info "Enter the partition to format (e.g. /dev/sde1)."
+        _info "Double-check the device name above — this will erase everything on it."
+        local format_dev
+        format_dev=$(_ask "Partition to format (e.g. /dev/sde1)")
+
+        if [[ -z "$format_dev" ]]; then
+            _warn "No device entered — skipping format"
+        elif [[ ! -b "$format_dev" ]]; then
+            _warn "$format_dev is not a block device — skipping format"
+        else
+            local current_fstype
+            current_fstype=$(blkid -s TYPE -o value "$format_dev" 2>/dev/null || echo "unknown")
+            local current_label
+            current_label=$(blkid -s LABEL -o value "$format_dev" 2>/dev/null || true)
+
+            echo ""
+            _warn "About to format $format_dev (currently: ${current_fstype}${current_label:+, label: $current_label})"
+            _warn "ALL DATA ON $format_dev WILL BE PERMANENTLY ERASED."
+            echo ""
+
+            if _ask_yn "Are you sure? This cannot be undone" "n"; then
+                _info "Unmounting $format_dev if currently mounted..."
+                umount "$format_dev" 2>/dev/null || true
+
+                local vol_label="PABS-BACKUP"
+                _info "Formatting $format_dev as ext4 (label: $vol_label)..."
+
+                if mkfs.ext4 -L "$vol_label" -m 0 "$format_dev" 2>&1 | sed 's/^/    /'; then
+                    _ok "Formatted $format_dev as ext4 (label: $vol_label)"
+                    _info "Enabling filesystem features for long-term USB use..."
+                    # Disable automatic fsck after N mounts — unnecessary for a backup drive
+                    # that PABS already monitors via the health check
+                    tune2fs -c 0 -i 0 "$format_dev" >/dev/null 2>&1 \
+                        && _ok "Disabled automatic fsck mount-count interval" || true
+                else
+                    _warn "mkfs.ext4 failed — check the device name and try again"
+                fi
+            else
+                _info "Format cancelled"
+            fi
+        fi
+    else
+        _info "Skipping format — make sure the drive is already ext4 before running backups"
+    fi
 
     # --- Mount point ---
     _step "Mount point"

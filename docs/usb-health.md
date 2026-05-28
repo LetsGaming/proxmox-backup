@@ -10,6 +10,46 @@ The health section appears under `--- USB Drive Health ---`.
 
 ---
 
+## Filesystem requirements
+
+PABS requires **ext4** on the USB drive. This is enforced by the setup wizard, which offers to format the drive before first use.
+
+| Filesystem | Supported | Reason |
+| :--------- | :-------- | :----- |
+| ext4       | ✓ Yes     | Full support: symlinks, Unix permissions, health checks |
+| ext3       | ✓ Yes     | Supported, but ext4 is preferred for newer features |
+| ext2       | ⚠ Partial | No journalling — power loss during write can corrupt the filesystem |
+| exFAT      | ✗ No      | No symlink support, no Unix permissions — rsync transfer will fail |
+| FAT32      | ✗ No      | Same limitations as exFAT, plus 4 GB file size limit |
+| NTFS       | ✗ No      | Requires `ntfs-3g`; no reliable symlink support in practice |
+
+**Why symlinks matter:** the staging tree contains symlinks captured from `/etc/pve` (pmxcfs FUSE artefacts) and `/root/.ssh/authorized_keys`. These need to be stored faithfully on the USB so the restore script and manifest verification work correctly. exFAT and FAT32 cannot store symlinks at all — rsync exits with an error when it tries to create them.
+
+**Why Unix permissions matter:** the `MANIFEST.sha256` verification, SSH key restore (`chmod 700`/`600`), and crontab restore all depend on preserved ownership and mode bits. FAT-family filesystems have no concept of these.
+
+**Why health checks need ext4:** Signal 3 of the USB health check reads the ext4 superblock error counter via `dumpe2fs`. This is the most reliable early-warning indicator of flash wear on USB sticks. It is silently skipped on non-ext filesystems, reducing visibility into drive health.
+
+### Formatting a drive as ext4
+
+Run the setup wizard — it will offer to format before mounting:
+
+```bash
+bash /opt/pabs/setup.sh --step usb
+```
+
+Or format manually:
+
+```bash
+# WARNING: erases all data on the partition
+umount /dev/sdX1                                   # unmount first if mounted
+mkfs.ext4 -L PABS-BACKUP -m 0 /dev/sdX1           # -m 0: no reserved blocks (backup drive, not OS)
+tune2fs -c 0 -i 0 /dev/sdX1                       # disable automatic fsck by mount count
+```
+
+After formatting, re-run `setup.sh --step usb` to update the UUID and fstab entry, since both change after a format.
+
+---
+
 ## What is checked
 
 Four independent signal layers are checked. Each produces its own pass/warn/fail result. A final verdict summarises how many layers failed.
