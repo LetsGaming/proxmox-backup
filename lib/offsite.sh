@@ -161,7 +161,7 @@ offsite_sync() {
     # shellcheck disable=SC2206
     local -a extra_opts=($RCLONE_EXTRA_OPTS)
     local dest
-    dest="${effective_remote}$(basename "$FINAL_DIR")"
+    dest="${effective_remote%/}/$(basename "$FINAL_DIR")"
 
     if rclone sync "$FINAL_DIR" "$dest" \
             "${extra_opts[@]}" \
