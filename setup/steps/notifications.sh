@@ -5,39 +5,54 @@ _step_notifications() {
     [[ -n "$JUMP_STEP" && "$JUMP_STEP" != "notifications" ]] && return
     _header "Step 3 of 7 — Notifications"
 
-    _info "PABS sends alerts on backup success, failure, and low-space events."
+    _info "PABS can alert you on backup success, failure, and low-disk-space events."
+    _info "Both channels are optional — skip either or both if you don't need them."
 
     # --- Discord ---
-    _step "Discord webhook"
+    _step "Discord webhook (recommended)"
     local current_webhook
     current_webhook=$(_cfg_get "DISCORD_WEBHOOK")
 
     if [[ -n "$current_webhook" ]]; then
         _ok "Discord webhook already configured"
-        _ask_yn "Update it?" "n" || { echo ""; _ok "Keeping existing webhook"; }
-        _ask_yn "Update it?" "n" && current_webhook=""
+        if ! _ask_yn "Update it?" "n"; then
+            echo ""
+        else
+            current_webhook=""
+        fi
     fi
 
     if [[ -z "$current_webhook" ]]; then
-        _info "Create a webhook: Server Settings → Integrations → Webhooks"
+        _info "To create a webhook: open your Discord server → Settings → Integrations → Webhooks"
+        _info "Click 'New Webhook', choose a channel, and copy the URL."
         if _ask_yn "Set up Discord notifications?" "n"; then
             local webhook
-            webhook=$(_ask "Discord webhook URL")
+            webhook=$(_ask "Paste your Discord webhook URL")
             if [[ -n "$webhook" ]]; then
-                _info "Sending test message..."
+                _info "Sending a test message to verify the webhook..."
                 local http_code
                 http_code=$(curl -s -o /dev/null -w "%{http_code}" \
                     -H "Content-Type: application/json" \
-                    -d '{"content":"✅ PABS setup test — Discord notifications working"}' \
+                    -d '{"content":"✅ PABS setup test — Discord notifications working!"}' \
                     "$webhook" 2>/dev/null || echo "000")
                 if [[ "$http_code" == "204" ]]; then
-                    _ok "Test message sent (check your Discord channel)"
+                    _ok "Test message sent successfully — check your Discord channel"
                     _cfg_set "DISCORD_WEBHOOK" "$webhook"
-                    _ok "DISCORD_WEBHOOK set"
+                    _ok "Discord webhook saved"
                 else
-                    _warn "Test failed (HTTP $http_code) — check the webhook URL"
-                    _ask_yn "Save it anyway?" "n" && _cfg_set "DISCORD_WEBHOOK" "$webhook"
+                    _warn "Test failed (HTTP $http_code)"
+                    if [[ "$http_code" == "000" ]]; then
+                        _warn "Could not reach Discord — check your network connection."
+                    elif [[ "$http_code" == "401" || "$http_code" == "404" ]]; then
+                        _warn "Webhook URL appears invalid — double-check you copied the full URL."
+                    fi
+                    if _ask_yn "Save the webhook URL anyway?" "n"; then
+                        _cfg_set "DISCORD_WEBHOOK" "$webhook"
+                        _ok "Discord webhook saved (test failed — verify manually)"
+                    fi
                 fi
+            else
+                _info "No URL entered — skipping Discord"
             fi
         else
             _info "Skipping Discord notifications"
@@ -68,13 +83,16 @@ _step_notifications() {
                         echo "PABS setup test — email notifications working" \
                             | mail -s "PABS test alert" "$email" 2>/dev/null \
                             && _ok "Test email sent" \
-                            || _warn "mail command failed — check MTA configuration"
+                            || _warn "mail command failed — check your MTA (postfix/nullmailer) configuration"
                     fi
                 fi
+            else
+                _info "Skipping email notifications"
             fi
         else
-            _info "mailutils not installed — skipping email setup"
-            _dim "(Install with: apt install mailutils)"
+            _info "mailutils is not installed — email notifications unavailable."
+            _dim "Install it later with: apt install mailutils"
+            _dim "Then re-run: bash setup.sh --step notifications"
         fi
     fi
 

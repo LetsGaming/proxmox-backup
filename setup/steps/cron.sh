@@ -15,32 +15,31 @@ _step_cron() {
     fi
 
     _step "Choose a backup schedule"
-    echo ""
-    echo "  ${BOLD}Presets:${RESET}"
-    echo "  ${GREEN}1)${RESET} Weekly  — Sunday at 03:00    (recommended)"
-    echo "  ${GREEN}2)${RESET} Weekly  — Saturday at 02:00"
-    echo "  ${GREEN}3)${RESET} Daily   — Every day at 03:00"
-    echo "  ${GREEN}4)${RESET} Monthly — 1st of month at 03:00"
-    echo "  ${GREEN}5)${RESET} Custom cron expression"
-    echo ""
 
-    local schedule_choice cron_expr
-    schedule_choice=$(_ask "Schedule" "1")
+    local schedule_choice
+    schedule_choice=$(_ask_choice "Schedule" "1" \
+        "Weekly  — Sunday at 03:00    (recommended)" \
+        "Weekly  — Saturday at 02:00" \
+        "Daily   — every day at 03:00" \
+        "Monthly — 1st of month at 03:00" \
+        "Custom cron expression")
 
+    local cron_expr
     case "$schedule_choice" in
         1) cron_expr="0 3 * * 0" ;;
         2) cron_expr="0 2 * * 6" ;;
         3) cron_expr="0 3 * * *" ;;
         4) cron_expr="0 3 1 * *" ;;
-        *)
-            _info "Format: minute hour day-of-month month day-of-week"
-            _dim "(e.g. '0 3 * * 0' = Sunday at 03:00)"
+        5)
+            _info "Format: minute  hour  day-of-month  month  day-of-week"
+            _info "Example: '0 3 * * 0'  = every Sunday at 03:00"
+            _info "         '30 2 * * 1' = every Monday at 02:30"
             cron_expr=$(_ask "Cron expression" "0 3 * * 0")
             ;;
     esac
 
     local cron_line="${cron_expr}  bash ${BACKUP_SCRIPT} >> /var/log/pabs-cron.log 2>&1"
-    _info "Cron line: $cron_line"
+    _info "Will add: $cron_line"
 
     if _ask_yn "Add this to root's crontab?"; then
         (crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT" || true; echo "$cron_line") \
@@ -52,8 +51,8 @@ _step_cron() {
         fi
     else
         _info "Skipping cron setup"
-        _dim "Add manually:  crontab -e"
-        _dim "Cron line:     $cron_line"
+        _dim "Add manually: crontab -e"
+        _dim "Cron line:    $cron_line"
     fi
 
     echo ""

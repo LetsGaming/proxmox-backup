@@ -1,9 +1,5 @@
 #!/bin/bash
 # setup/steps/agents.sh — Step 4: VM/LXC agent deployment
-#
-# Handles SSH key setup, per-VM type configuration questions, and
-# invokes install-agent.sh with the appropriate --set flags.
-# Each agent type's questions are isolated in a dedicated function.
 
 # ---------------------------------------------------------------------------
 # Type-specific configuration questionnaires
@@ -14,40 +10,56 @@ _agent_type_docker() {
     local -n _flags=$1
     _flags+=(--set "PABS_TYPE=docker")
     echo ""
-    _info "Docker manager: auto | none | dockge | portainer"
+    _info "Docker manager detection: leave empty to auto-detect (recommended)."
+    _info "Override only if auto-detect picks the wrong manager."
     local mgr
-    mgr=$(_ask "Docker manager (empty = auto-detect)" "")
-    [[ -n "$mgr" ]] && _flags+=(--set "DOCKER_MANAGER=$mgr")
-
-    if [[ "${mgr,,}" == "dockge" ]]; then
-        local dir
-        dir=$(_ask "Dockge stacks directory" "/opt/stacks")
-        [[ "$dir" != "/opt/stacks" ]] && _flags+=(--set "DOCKGE_STACKS_DIR=$dir")
-    fi
-
-    if [[ "${mgr,,}" == "portainer" ]]; then
-        local url token
-        url=$(_ask "Portainer URL" "http://localhost:9000")
-        [[ "$url" != "http://localhost:9000" ]] && _flags+=(--set "PORTAINER_URL=$url")
-        token=$(_ask "Portainer API token (ptr_...)")
-        [[ -n "$token" ]] && _flags+=(--set "PORTAINER_TOKEN=$token")
-    fi
+    mgr=$(_ask_choice "Docker manager" "1" \
+        "Auto-detect (recommended)" \
+        "None (plain docker-compose, no manager)" \
+        "Dockge" \
+        "Portainer")
+    case "$mgr" in
+        2) _flags+=(--set "DOCKER_MANAGER=none") ;;
+        3)
+            _flags+=(--set "DOCKER_MANAGER=dockge")
+            local dir
+            dir=$(_ask "Dockge stacks directory" "/opt/stacks")
+            [[ "$dir" != "/opt/stacks" ]] && _flags+=(--set "DOCKGE_STACKS_DIR=$dir")
+            ;;
+        4)
+            _flags+=(--set "DOCKER_MANAGER=portainer")
+            local url token
+            url=$(_ask "Portainer URL" "http://localhost:9000")
+            [[ "$url" != "http://localhost:9000" ]] && _flags+=(--set "PORTAINER_URL=$url")
+            _info "An API token lets PABS export your stack definitions via the Portainer API."
+            _info "Create one in Portainer: Account → API Tokens → Add API Token"
+            token=$(_ask "Portainer API token (ptr_..., leave empty to skip)")
+            [[ -n "$token" ]] && _flags+=(--set "PORTAINER_TOKEN=$token")
+            ;;
+        *) ;;  # 1 = auto, no flag needed
+    esac
 }
 
 _agent_type_haos() {
     local -n _flags=$1
     _flags+=(--set "PABS_TYPE=haos")
     echo ""
+    _info "HAOS backups use the native 'ha backup' command — restoreable directly from the HA UI."
+
     local btype
-    btype=$(_ask "Backup type (full/partial)" "full")
-    [[ "$btype" != "full" ]] && _flags+=(--set "HAOS_BACKUP_TYPE=$btype")
-    if _ask_yn "Encrypt the HA snapshot?" "n"; then
+    btype=$(_ask_choice "Backup type" "1" \
+        "Full backup (everything — recommended)" \
+        "Partial backup (select add-ons and folders)")
+    [[ "$btype" == "2" ]] && _flags+=(--set "HAOS_BACKUP_TYPE=partial")
+
+    if _ask_yn "Encrypt the HA snapshot with a password?" "n"; then
         local pass
         pass=$(_ask_secret "HA snapshot password")
         [[ -n "$pass" ]] && _flags+=(--set "HAOS_BACKUP_PASSWORD=$pass")
     fi
+
     local keep
-    keep=$(_ask "Snapshots to keep on HA host after pull" "1")
+    keep=$(_ask "How many old HA snapshots to keep on the HA host after PABS pulls them" "1")
     [[ "$keep" != "1" ]] && _flags+=(--set "HAOS_KEEP_ON_HOST=$keep")
 }
 
@@ -55,25 +67,25 @@ _agent_type_minecraft() {
     local -n _flags=$1
     _flags+=(--set "PABS_TYPE=minecraft")
     echo ""
-    _info "Defaults match an unmodified minecraft-server-setup install."
-    _info "Only change these if you customised the username or paths in variables.json."
+    _info "Designed for minecraft-server-setup. Defaults match a standard install."
+    _info "Only change these if you used custom paths in variables.json."
 
     local sys_user
-    sys_user=$(_ask "System username running Minecraft" "minecraft")
+    sys_user=$(_ask "Linux username running Minecraft" "minecraft")
     local base_default="/home/${sys_user}/minecraft-server/backups"
     local server_default="/home/${sys_user}/minecraft-server"
 
     local base server weekly daily
-    base=$(_ask "MINECRAFT_BASE (backup archives dir)" "$base_default")
+    base=$(_ask "Backup archives directory (MINECRAFT_BASE)" "$base_default")
     [[ "$base" != "$base_default" ]] && _flags+=(--set "MINECRAFT_BASE=$base")
 
-    server=$(_ask "MINECRAFT_SERVER_BASE (server root)" "$server_default")
+    server=$(_ask "Server root directory (MINECRAFT_SERVER_BASE)" "$server_default")
     [[ "$server" != "$server_default" ]] && _flags+=(--set "MINECRAFT_SERVER_BASE=$server")
 
     weekly=$(_ask "Weekly archives to keep per instance" "4")
     [[ "$weekly" != "4" ]] && _flags+=(--set "MC_KEEP_WEEKLY=$weekly")
 
-    daily=$(_ask "Daily archives to keep (0 = skip)" "0")
+    daily=$(_ask "Daily archives to keep per instance (0 = skip dailies)" "0")
     [[ "$daily" != "0" ]] && _flags+=(--set "MC_KEEP_DAILY=$daily")
 }
 
@@ -81,8 +93,10 @@ _agent_type_generic() {
     local -n _flags=$1
     _flags+=(--set "PABS_TYPE=generic")
     echo ""
+    _info "Backs up /etc, cron jobs, /usr/local/bin, and installed package list."
+    _info "Good for Pi-hole, AdGuard, Nginx, or any plain Debian/Ubuntu VM."
     local extra
-    extra=$(_ask "Extra paths to include (space-separated, empty to skip)" "")
+    extra=$(_ask "Extra paths to include (space-separated, leave empty for none)")
     [[ -n "$extra" ]] && _flags+=(--set "EXTRA_PATHS=$extra")
 }
 
@@ -91,7 +105,7 @@ _agent_type_generic() {
 # ---------------------------------------------------------------------------
 
 _agents_setup_ssh_key() {
-    _step "SSH key for agent connections"
+    _step "Dedicated SSH key for agent connections"
     local current_key key_path="/root/.ssh/id_ed25519_pabs_agent"
     current_key=$(_cfg_get "VM_SSH_KEY")
 
@@ -102,23 +116,28 @@ _agents_setup_ssh_key() {
 
     if [[ -f "$key_path" ]]; then
         _ok "Dedicated PABS key already exists at $key_path"
-        if _ask_yn "Use $key_path as the shared agent key?"; then
+        if _ask_yn "Use $key_path as the agent SSH key?"; then
             _cfg_set "VM_SSH_KEY" "$key_path"
             _ok "VM_SSH_KEY set to $key_path"
         fi
         return
     fi
 
-    _info "A dedicated SSH key is recommended so rotating root's key"
-    _info "doesn't silently break agent backups."
-    if _ask_yn "Generate a dedicated PABS agent key at $key_path?"; then
+    _info "A dedicated SSH key is recommended so that rotating root's default key"
+    _info "doesn't silently break all your agent backups."
+    if _ask_yn "Generate a dedicated PABS agent SSH key at $key_path?"; then
         if ssh-keygen -t ed25519 -f "$key_path" -N "" -C "pabs-agent@$(hostname)"; then
             _ok "Key generated: $key_path"
             _cfg_set "VM_SSH_KEY" "$key_path"
             _ok "VM_SSH_KEY set to $key_path"
+            echo ""
+            _info "Next: copy this public key to each VM you want to back up:"
+            _dim "  ssh-copy-id -i $key_path.pub root@<vm-ip>"
         else
-            _warn "Key generation failed — continuing without dedicated key"
+            _warn "Key generation failed — continuing without a dedicated key"
         fi
+    else
+        _info "Skipping dedicated key — will use root's default SSH key"
     fi
 }
 
@@ -129,35 +148,34 @@ _agents_setup_ssh_key() {
 _agents_add_one() {
     _step "Add a VM or LXC"
 
+    _info "Enter the IP address or hostname of the VM/LXC to back up."
     local vm_host vm_user vm_label default_label
     vm_host=$(_ask "VM IP or hostname")
     [[ -z "$vm_host" ]] && { _warn "No host entered — skipping"; return 1; }
 
     vm_user=$(_ask "SSH user on the VM" "root")
     default_label="${vm_host//./-}"
-    vm_label=$(_ask "Label (folder name in backup)" "$default_label")
+    _info "The label is used as the folder name in your backup — keep it short and descriptive."
+    vm_label=$(_ask "Label for this VM" "$default_label")
 
     _step "VM type"
-    _info "The agent auto-detects the type; only override if your setup is non-standard."
-    echo ""
-    echo "  ${BOLD}Types:${RESET}"
-    echo "  ${GREEN}1)${RESET} Docker            — compose files, .env, volumes"
-    echo "  ${GREEN}2)${RESET} Home Assistant OS — native HA snapshot"
-    echo "  ${GREEN}3)${RESET} Minecraft         — weekly archives (minecraft-server-setup)"
-    echo "  ${GREEN}4)${RESET} Generic           — /etc, cron, scripts, packages"
-    echo "  ${GREEN}5)${RESET} Auto-detect       — let the agent figure it out"
-    echo ""
+    _info "The agent will auto-detect the type. Choose manually only if needed."
 
     local type_choice
-    type_choice=$(_ask "VM type" "5")
+    type_choice=$(_ask_choice "VM type" "5" \
+        "Docker            — compose files, .env, volumes" \
+        "Home Assistant OS — native HA snapshot (one-click restore)" \
+        "Minecraft         — weekly archives (minecraft-server-setup)" \
+        "Generic           — /etc, cron, scripts, packages" \
+        "Auto-detect       — let the agent figure it out (recommended)")
 
     local -a set_flags=()
     case "$type_choice" in
-        1) _agent_type_docker  set_flags ;;
-        2) _agent_type_haos    set_flags ;;
+        1) _agent_type_docker    set_flags ;;
+        2) _agent_type_haos      set_flags ;;
         3) _agent_type_minecraft set_flags ;;
-        4) _agent_type_generic set_flags ;;
-        *) _info "Using auto-detection" ;;
+        4) _agent_type_generic   set_flags ;;
+        *) _info "Auto-detect selected — no type flags needed" ;;
     esac
 
     local -a install_cmd=("bash" "$INSTALL_AGENT" "${vm_user}@${vm_host}")
@@ -174,11 +192,12 @@ _agents_add_one() {
     if "${install_cmd[@]}"; then
         _ok "Agent deployed to ${vm_host}"
         _cfg_append_vm_agent "${vm_label}  ${vm_host}  ${vm_user}  /opt/pabs-agent/agent.sh"
-        _ok "Added to VM_AGENTS: $vm_label  $vm_host  $vm_user"
+        _ok "Added to VM_AGENTS: $vm_label → $vm_host (user: $vm_user)"
     else
         _err "Agent deployment failed for ${vm_host}"
+        _info "Possible causes: SSH not reachable, wrong user, key not copied to VM."
         _info "Retry later with:"
-        _dim "  bash install-agent.sh ${vm_user}@${vm_host} ${set_flags[*]}"
+        _dim "  bash install-agent.sh ${vm_user}@${vm_host}${set_flags[*]:+ ${set_flags[*]}}"
     fi
 }
 
@@ -190,22 +209,24 @@ _step_agents() {
     [[ -n "$JUMP_STEP" && "$JUMP_STEP" != "agents" ]] && return
     _header "Step 4 of 7 — VM / LXC Agent Backups"
 
-    _info "PABS backs up VMs and LXCs with a lightweight agent — no disk images."
-    _info "Types: Docker, Home Assistant OS, Minecraft, Generic"
+    _info "PABS backs up VMs and LXCs using a lightweight agent script — no disk images needed."
+    _info "The agent is deployed once per VM, then PABS pulls a backup bundle over SSH."
     echo ""
+    _info "Supported types: Docker · Home Assistant OS · Minecraft · Generic (any Linux VM)"
 
+    # Count only real (non-comment) agent entries
     local agent_count
-    agent_count=$(grep -c '".*\.sh"' "$CONFIG" 2>/dev/null || echo 0)
+    agent_count=$(grep -E '^\s+"[a-zA-Z0-9]' "$CONFIG" 2>/dev/null | grep -c '\.sh"' || echo 0)
     if [[ "$agent_count" -gt 0 ]]; then
+        echo ""
         _ok "$agent_count agent(s) already configured:"
-        grep '".*\.sh"' "$CONFIG" | sed 's/^/    /'
+        grep -E '^\s+"[a-zA-Z0-9]' "$CONFIG" 2>/dev/null | grep '\.sh"' | sed 's/^/    /'
         echo ""
     fi
 
     if ! _ask_yn "Add a VM/LXC agent now?" "n"; then
-        _info "Skipping VM agent setup"
-        _dim "Add agents later: bash setup.sh --step agents"
-        _dim "Or directly:      bash install-agent.sh root@<vm-ip>"
+        _info "Skipping — add agents later with: bash setup.sh --step agents"
+        _dim "Or directly: bash install-agent.sh root@<vm-ip>"
         return
     fi
 
@@ -220,14 +241,14 @@ _step_agents() {
 
     # Parallelism — only offer if there are multiple agents
     local final_count
-    final_count=$(grep -c '".*\.sh"' "$CONFIG" 2>/dev/null || echo 0)
+    final_count=$(grep -E '^\s+"[a-zA-Z0-9]' "$CONFIG" 2>/dev/null | grep -c '\.sh"' || echo 0)
     if [[ "$final_count" -gt 1 ]]; then
-        _step "Agent parallelism"
+        _step "Parallel agent backups"
         local current_parallel parallel
         current_parallel=$(_cfg_get "VM_AGENT_MAX_PARALLEL")
-        _info "Run multiple agents simultaneously to cut total backup time."
-        _info "Recommended: 1 per 500 MB of expected bundle size."
-        parallel=$(_ask "Max parallel agents" "${current_parallel:-1}")
+        _info "PABS can run multiple agent backups simultaneously to reduce total backup time."
+        _info "Rule of thumb: 1 parallel per 500 MB of expected bundle size."
+        parallel=$(_ask "Maximum simultaneous agent backups" "${current_parallel:-1}")
         if [[ "$parallel" != "${current_parallel:-1}" ]]; then
             _cfg_set_raw "VM_AGENT_MAX_PARALLEL" "$parallel"
             _ok "VM_AGENT_MAX_PARALLEL set to $parallel"

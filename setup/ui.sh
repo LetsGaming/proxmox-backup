@@ -11,7 +11,7 @@
 # Colour detection — disabled automatically in pipes / CI / dumb terminals
 # ---------------------------------------------------------------------------
 
-if [[ -t 1 ]] && command -v tput &>/dev/null && tput colors &>/dev/null 2>&1; then
+if [[ -t 2 ]] && command -v tput &>/dev/null && tput colors &>/dev/null 2>&1; then
     RED=$(tput setaf 1)
     GREEN=$(tput setaf 2)
     YELLOW=$(tput setaf 3)
@@ -63,30 +63,36 @@ _die() {
 
 # _ask PROMPT [DEFAULT]
 # Prompts the user and returns the typed value, or DEFAULT if empty.
-# In --yes mode, returns DEFAULT immediately (non-interactive).
+#
+# CRITICAL: The prompt is written to stderr (>&2) so that callers using
+# val=$(_ask ...) capture only the clean value on stdout, not the prompt text.
+# Without this, val would contain the entire "  Prompt [default]: answer" line.
+#
+# In --yes mode, returns DEFAULT immediately without prompting.
 _ask() {
     local prompt="$1"
     local default="${2:-}"
     local input
 
     if [[ -n "$default" ]]; then
-        printf "  %s [%s]: " "$prompt" "${DIM}${default}${RESET}"
+        printf "  %s${BOLD} [%s]${RESET}: " "$prompt" "$default" >&2
     else
-        printf "  %s: " "$prompt"
+        printf "  %s: " "$prompt" >&2
     fi
 
     if ${AUTO_YES:-false} && [[ -n "$default" ]]; then
-        echo "$default"
+        printf '%s\n' "$default" >&2   # echo the default so output looks right
+        printf '%s' "$default"
         return
     fi
 
     read -r input
-    echo "${input:-$default}"
+    printf '%s' "${input:-$default}"
 }
 
 # _ask_yn PROMPT [DEFAULT: y|n]
 # Returns 0 for yes, 1 for no.
-# Default is 'y' when not specified.
+# Prompt written to stderr; no stdout output (return code is the answer).
 _ask_yn() {
     local prompt="$1"
     local default="${2:-y}"
@@ -98,9 +104,9 @@ _ask_yn() {
 
     while true; do
         if [[ "$default" == "y" ]]; then
-            printf "  %s [Y/n]: " "$prompt"
+            printf "  %s ${BOLD}[Y/n]${RESET}: " "$prompt" >&2
         else
-            printf "  %s [y/N]: " "$prompt"
+            printf "  %s ${BOLD}[y/N]${RESET}: " "$prompt" >&2
         fi
         read -r yn
         yn="${yn:-$default}"
@@ -113,20 +119,50 @@ _ask_yn() {
 }
 
 # _ask_secret PROMPT
-# Reads without echo. Never auto-fills in --yes mode (secrets must be explicit).
+# Reads without echo. Prompt written to stderr. Never auto-fills in --yes mode.
 _ask_secret() {
     local prompt="$1"
     local input
-    printf "  %s: " "$prompt"
+    printf "  %s: " "$prompt" >&2
     read -rs input
-    echo ""
-    echo "$input"
+    echo "" >&2
+    printf '%s' "$input"
+}
+
+# _ask_choice PROMPT DEFAULT OPTION1 OPTION2 ...
+# Displays a numbered menu and returns the chosen number.
+# Prompt and menu written to stderr; only the number goes to stdout.
+_ask_choice() {
+    local prompt="$1"
+    local default="$2"
+    shift 2
+    local -a options=("$@")
+    local choice
+
+    echo "" >&2
+    local i=1
+    for opt in "${options[@]}"; do
+        printf "  ${GREEN}%d)${RESET} %s\n" "$i" "$opt" >&2
+        (( i++ ))
+    done
+    echo "" >&2
+
+    while true; do
+        printf "  %s ${BOLD}[%s]${RESET}: " "$prompt" "$default" >&2
+        read -r choice
+        choice="${choice:-$default}"
+        if [[ "$choice" =~ ^[0-9]+$ && "$choice" -ge 1 && "$choice" -le ${#options[@]} ]]; then
+            printf '%s' "$choice"
+            return
+        fi
+        _warn "Enter a number between 1 and ${#options[@]}"
+    done
 }
 
 # _pause [MESSAGE]
 # Waits for Enter. Skipped silently in --yes mode.
 _pause() {
     ${AUTO_YES:-false} && return
-    printf "  ${DIM}%s — press Enter to continue...${RESET}" "${1:-}"
+    printf "  ${DIM}%s — press Enter to continue...${RESET}" "${1:-}" >&2
     read -r
 }
