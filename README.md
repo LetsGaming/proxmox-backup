@@ -5,6 +5,7 @@
 [![Tests](https://img.shields.io/badge/Tests-BATS-brightgreen.svg)](tests/pabs.bats)
 [![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25.svg)](backup.sh)
 
+```
   ██████╗  █████╗ ██████╗ ███████╗
   ██╔══██╗██╔══██╗██╔══██╗██╔════╝
   ██████╔╝███████║██████╔╝███████╗
@@ -12,6 +13,7 @@
   ██║     ██║  ██║██████╔╝███████║
   ╚═╝     ╚═╝  ╚═╝╚═════╝ ╚══════╝
   Proxmox Automated Backup System
+```
 
 Backs up a Proxmox node — configs, VM/CT definitions, SSH keys, firewall rules, package state, and per-VM application bundles — to a USB stick. Optionally syncs offsite with AES-256 encryption.
 
