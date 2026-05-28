@@ -46,6 +46,7 @@ Each completed backup contains a self-contained `proxmox-restore.sh` and
 pabs/
 ├── backup.sh              Entry point — run this or schedule with cron
 ├── config.sh              Your configuration — the only file you need to edit
+├── setup.sh               Interactive setup wizard — start here
 ├── install-agent.sh       One-time setup: deploys the VM agent to a VM over SSH
 ├── pabs-status.sh         Health check — USB, backup state, VM reachability, offsite
 ├── docs/
@@ -80,12 +81,31 @@ pabs/
 
 ```bash
 git clone <repo> /opt/pabs
-chmod +x /opt/pabs/backup.sh /opt/pabs/install-agent.sh /opt/pabs/pabs-status.sh
+chmod +x /opt/pabs/*.sh
 ```
 
-### 2. Configure
+### 2. Run the setup wizard
 
-Edit `config.sh` — it is the **only file you need to touch**. At minimum, set:
+```bash
+sudo bash /opt/pabs/setup.sh
+```
+
+The wizard walks through every setting, installs dependencies, deploys VM
+agents, configures offsite sync, adds a cron job, and offers to run the first
+backup — all from one interactive session. It is safe to re-run at any time
+to update settings or add new VMs.
+
+To jump directly to a specific step:
+```bash
+sudo bash setup.sh --step offsite   # reconfigure offsite only
+sudo bash setup.sh --step agents    # add a new VM agent
+```
+
+**Available steps:** `deps` | `usb` | `notifications` | `agents` | `offsite` | `cron` | `run`
+
+### Manual configuration (alternative to the wizard)
+
+Edit `config.sh` directly — it is the **only file you need to touch**. At minimum:
 
 ```bash
 USB_MOUNT="/mnt/backup-usb"
@@ -246,3 +266,5 @@ remote status and storage usage, local stage space. Returns 0 (OK), 1 (error),
 | [`docs/offsite.md`](docs/offsite.md) | Cloud remotes, free-tier sizing, encryption, retention |
 | [`docs/restore.md`](docs/restore.md) | Restore procedures, DR walkthrough, bundle extraction |
 | [`docs/architecture.md`](docs/architecture.md) | Data flow, integrity guarantees, design decisions |
+
+Run `sudo bash setup.sh` for guided setup, or edit `config.sh` directly and refer to the docs above.
