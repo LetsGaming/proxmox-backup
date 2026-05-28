@@ -1,7 +1,7 @@
 # PABS — Proxmox Automated Backup System
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Proxmox%20VE-7.x%20%2F%208.x-e57000.svg)](https://www.proxmox.com/)
+[![Platform](https://img.shields.io/badge/Proxmox%20VE-7.x%20–%209.x-e57000.svg)](https://www.proxmox.com/)
 [![Tests](https://img.shields.io/badge/Tests-BATS-brightgreen.svg)](tests/pabs.bats)
 [![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25.svg)](backup.sh)
 
@@ -23,7 +23,7 @@ Backs up a Proxmox node — configs, VM/CT definitions, SSH keys, firewall rules
 
 ## Install
 
-**Requires:** Proxmox VE 7.x or 8.x · root access · a partitioned USB stick · internet access during setup only
+**Requires:** Proxmox VE 7.x – 9.x · root access · a partitioned USB stick · internet access during setup only
 
 ```bash
 git clone https://github.com/your-org/pabs /opt/pabs
