@@ -249,65 +249,52 @@ DETECTED_TYPE="$(
 
 log "Detected type: $DETECTED_TYPE"
 
-# ---------------------------------------------------------------------------
-# Auto-register VM in config.sh
-# ---------------------------------------------------------------------------
-
+# --- Auto-register VM in config.sh ---
 CONFIG_FILE="$SCRIPT_DIR/config.sh"
 
+HOST_PART="${TARGET##*@}"
 LABEL="${HOST_PART//./-}"
-
-VM_ENTRY="\"$LABEL  $HOST_PART  ${TARGET%%@*}  $REMOTE_DIR/agent.sh\""
+VM_ENTRY="    \"$LABEL  $HOST_PART  ${TARGET%%@*}  $REMOTE_DIR/agent.sh\""
 
 log ""
 log "Registering VM agent in config.sh ..."
 
-if grep -Fq "$VM_ENTRY" "$CONFIG_FILE"; then
-    log "✓ VM already present in VM_AGENTS"
+if grep -Fq "\"$LABEL  $HOST_PART" "$CONFIG_FILE"; then
+    log "  ✓ VM already present in VM_AGENTS"
 else
-python3 - "$CONFIG_FILE" "$VM_ENTRY" << 'PYEOF'
-import sys
-import re
-from pathlib import Path
+    TMP_FILE="$(mktemp)"
 
-config_path = Path(sys.argv[1])
-entry = sys.argv[2]
+    in_vm_agents=0
+    inserted=0
 
-text = config_path.read_text()
+    while IFS= read -r line; do
+        echo "$line" >> "$TMP_FILE"
 
-match = re.search(r'^\s*VM_AGENTS=\(', text, re.MULTILINE)
+        # Detect the REAL VM_AGENTS block
+        if [[ "$line" =~ ^VM_AGENTS=\($ ]]; then
+            in_vm_agents=1
+            continue
+        fi
 
-if not match:
-    print("VM_AGENTS block not found", file=sys.stderr)
-    sys.exit(1)
+        # Insert BEFORE the closing ) of the real block
+        if [[ $in_vm_agents -eq 1 && "$line" == ")" ]]; then
+            sed -i "\|^)$|i\\$VM_ENTRY" "$TMP_FILE"
+            inserted=1
+            in_vm_agents=0
+        fi
+    done < "$CONFIG_FILE"
 
-start = match.start()
-
-end = text.find(")", start)
-
-if end == -1:
-    print("Malformed VM_AGENTS block", file=sys.stderr)
-    sys.exit(1)
-
-block = text[start:end]
-
-if entry not in block:
-    new_block = block + f"    {entry}\n"
-    text = text[:start] + new_block + text[end:]
-
-config_path.write_text(text)
-
-print("Added VM entry successfully")
-PYEOF
-
-    log "✓ Added VM to VM_AGENTS"
+    if [[ $inserted -eq 1 ]]; then
+        mv "$TMP_FILE" "$CONFIG_FILE"
+        log "  ✓ Added VM to VM_AGENTS"
+    else
+        rm -f "$TMP_FILE"
+        log "  ERROR: failed to locate VM_AGENTS block"
+        exit 1
+    fi
 fi
-
-# ---------------------------------------------------------------------------
-# Done
-# ---------------------------------------------------------------------------
 
 log ""
 log "============================================================"
-log "Install complete"
+log "VM registration complete"
 log "============================================================"
