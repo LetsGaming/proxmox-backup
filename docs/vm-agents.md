@@ -1,40 +1,36 @@
-# VM Agent Backups
+# VM agent backups
 
-PABS backs up VMs and LXCs with a lightweight agent deployed to each one.
-The agent auto-detects the VM type, collects only what's needed to restore,
-and produces a self-contained `.tar.zst` bundle that PABS pulls back to USB.
+PABS backs up VMs and LXCs with a lightweight agent deployed once per guest. The agent auto-detects the VM type, collects only what's needed to restore, and produces a self-contained `.tar.zst` bundle that PABS pulls back to USB during the backup run.
 
-No disk images are involved. Each bundle is self-contained with a
-`restore-notes.txt` — no PABS installation is required on the recovery machine.
+No disk images are involved. Each bundle includes a `restore-notes.txt` with type-specific instructions. This repository is not required at restore time.
 
 ---
 
 ## Supported types
 
 | Type | Detection | What's backed up |
-|---|---|---|
-| **docker** | `docker` CLI present | All compose files + `.env`, Docker daemon config, named volumes (under threshold), package list |
-| **haos** | `ha` CLI present + `/config/configuration.yaml` exists | Full native HA snapshot (`.tar`) via `ha` CLI — one-click restore via HA UI |
-| **minecraft** | `minecraft` system user, or `MINECRAFT_BASE` directory present | Weekly `.tar.zst` archives from `minecraft-server-setup`, server config files, mods/plugins |
-| **generic** | everything else | `/etc` (full), cron jobs, `/usr/local/bin`, `/root/scripts`, package list |
+| :--- | :-------- | :--------------- |
+| `docker` | `docker` CLI present | All compose files + `.env` files, Docker daemon config, named volumes (under threshold), package list |
+| `haos` | `ha` CLI present + `/config/configuration.yaml` exists | Full native HA snapshot (`.tar`) via `ha` CLI — one-click restore in HA UI |
+| `minecraft` | `minecraft` system user, or `MINECRAFT_BASE` directory present | Weekly `.tar.zst` archives from `minecraft-server-setup`, server config files, mods/plugins |
+| `generic` | everything else | `/etc/` (full), cron jobs, `/usr/local/bin/`, `/root/scripts/`, package list |
 
-Detection runs in the order above — first match wins. Override with
-`--set PABS_TYPE=<type>` during installation.
+Detection runs in the order above — first match wins. Override with `--set PABS_TYPE=<type>` during installation.
 
 ---
 
 ## Installation
 
+> **Using the wizard?** Run `sudo bash /opt/pabs/setup.sh --step agents` — it handles SSH key generation, asks type-specific questions, and calls `install-agent.sh` for you. The steps below are for manual setup or adding agents outside the wizard.
+
 ### Step 1 — Deploy the agent
 
-Run `install-agent.sh` from the Proxmox host once per VM. It copies the
-agent files, runs first-time setup, registers the SSH host key, and prints
-the `VM_AGENTS` line to add to `config.sh`.
+Run `install-agent.sh` from the Proxmox host once per VM. It copies the agent files, runs first-time setup on the VM, registers the SSH host key in `/root/.ssh/pabs_known_hosts`, and prints the `VM_AGENTS` line to add to `config.sh`.
 
 ```bash
 chmod +x /opt/pabs/install-agent.sh
 
-# Basic install
+# Basic install — auto-detect type
 ./install-agent.sh root@192.168.1.10
 
 # With a dedicated SSH key
@@ -43,16 +39,16 @@ chmod +x /opt/pabs/install-agent.sh
 # Custom remote install path
 ./install-agent.sh root@192.168.1.10 --dir /home/backup/pabs-agent
 
-# Pass configuration values during install — no SSH required afterwards
+# Pass configuration values at install time
 ./install-agent.sh alice@192.168.1.40 \
     --set MINECRAFT_BASE=/home/alice/servers/backups \
     --set MINECRAFT_SERVER_BASE=/home/alice/servers \
     --set MC_KEEP_WEEKLY=2
 ```
 
-### Step 2 — Add to config.sh
+### Step 2 — Add to `config.sh`
 
-Copy the `VM_AGENTS` line printed by `install-agent.sh` into `config.sh`:
+Copy the `VM_AGENTS` line printed by `install-agent.sh`:
 
 ```bash
 VM_AGENTS=(
@@ -69,16 +65,13 @@ VM_AGENTS=(
 /opt/pabs/backup.sh --dry-run
 ```
 
-Then run a full backup and verify the bundles appear under
-`/mnt/backup-usb/proxmox-backup/<date>/vm-agents/<label>/`.
+Run a full backup and verify the bundles appear at `/mnt/backup-usb/proxmox-backup/<date>/vm-agents/<label>/`.
 
 ---
 
 ## Configuring agents with `--set`
 
-All agent configuration is done from the Proxmox host during installation
-via `--set KEY=VALUE` flags — you never need to SSH into a VM to edit
-`/etc/pabs-agent/config` manually.
+All agent configuration is applied from the Proxmox host during installation via `--set KEY=VALUE` flags. No SSH into the VM to edit `/etc/pabs-agent/config` manually.
 
 `--set` can be repeated for multiple values:
 
@@ -89,22 +82,19 @@ via `--set KEY=VALUE` flags — you never need to SSH into a VM to edit
     --set DOCKGE_STACKS_DIR=/opt/mystacks
 ```
 
-To update a setting after initial installation, simply re-run `install-agent.sh`
-with the new `--set` value — it will overwrite the previous value in the config
-file on the VM. The agent files are also updated to the latest version at the
-same time.
+To update a setting after initial installation, re-run `install-agent.sh` with the new `--set` value. It overwrites the previous value in the config on the VM and updates the agent files to the latest version at the same time.
 
 ---
 
-## Type-specific configuration reference
+## Type-specific configuration
 
 ### Docker (`types/docker.sh`)
 
 | Variable | Default | Description |
-|---|---|---|
+| :------- | :------ | :---------- |
 | `DOCKER_COMPOSE_DIR` | `""` | If set, search only this directory for compose files (skips auto-detection) |
 | `DOCKER_SEARCH_PATHS` | `/opt /srv /home /root /var/lib/docker/compose` | Directories to search for compose files when no manager is detected |
-| `DOCKER_SEARCH_DEPTH` | `3` | How deep to recurse when searching for compose files |
+| `DOCKER_SEARCH_DEPTH` | `3` | Recursion depth for compose file search |
 | `DOCKER_MANAGER` | `auto` | Manager override: `auto` \| `none` \| `dockge` \| `portainer` |
 | `DOCKGE_STACKS_DIR` | `/opt/stacks` | Dockge stacks directory |
 | `DOCKGE_DATA_DIR` | `/opt/dockge` | Dockge data/config directory |
@@ -124,13 +114,13 @@ same time.
     --set DOCKGE_STACKS_DIR=/srv/stacks \
     --set DOCKGE_DATA_DIR=/srv/dockge
 
-# Portainer with API export
+# Portainer with API stack export
 ./install-agent.sh root@192.168.1.10 \
     --set DOCKER_MANAGER=portainer \
     --set PORTAINER_URL=http://localhost:9000 \
     --set PORTAINER_TOKEN=ptr_abc123xyz
 
-# Force-include specific named volumes
+# Force-include specific named volumes regardless of size
 ./install-agent.sh root@192.168.1.10 \
     --set DOCKER_INCLUDE_VOLUMES=portainer_data,traefik_certs,vaultwarden_data
 ```
@@ -139,13 +129,12 @@ same time.
 
 ### Home Assistant OS (`types/haos.sh`)
 
-Must be run inside the HAOS SSH add-on shell. The agent triggers a native
-HA snapshot via the `ha` CLI — the same format as HA's own backup system.
+Must run inside the HAOS SSH add-on shell. Triggers a native HA snapshot via the `ha` CLI — the same format as HA's own backup system.
 
 | Variable | Default | Description |
-|---|---|---|
+| :------- | :------ | :---------- |
 | `HAOS_BACKUP_DIR` | `/backup` | Where HA stores snapshots (inside the add-on shell) |
-| `HAOS_BACKUP_NAME` | `pabs-auto` | Prefix for the generated backup name (shown in HA UI) |
+| `HAOS_BACKUP_NAME` | `pabs-auto` | Prefix for the generated backup name (visible in HA UI) |
 | `HAOS_BACKUP_TYPE` | `full` | `full` or `partial` |
 | `HAOS_BACKUP_PASSWORD` | `""` | Encrypt the HA snapshot (leave empty for no encryption) |
 | `HAOS_WAIT_SECONDS` | `300` | Max seconds to wait for HA to finish creating the snapshot |
@@ -154,16 +143,18 @@ HA snapshot via the `ha` CLI — the same format as HA's own backup system.
 | `HAOS_PARTIAL_ADDONS` | `""` | Comma-separated add-on slugs (partial backup only) |
 | `HAOS_PARTIAL_FOLDERS` | `""` | Comma-separated folders (partial backup only): `homeassistant,ssl,share,media,addons/local` |
 
+> HA snapshots are commonly 200 MB – 2 GB. Set `VM_AGENT_KEEP_BUNDLES=1` in `config.sh` if USB space is limited.
+
 **Examples:**
 
 ```bash
-# Full backup with encryption (separate from PABS offsite encryption)
+# Full backup with encryption
 ./install-agent.sh root@192.168.1.20 \
     --set HAOS_BACKUP_TYPE=full \
     --set HAOS_BACKUP_PASSWORD=mysecretpassword \
     --set HAOS_KEEP_ON_HOST=2
 
-# Partial backup — HA config + SSL only
+# Partial backup — HA config and SSL only
 ./install-agent.sh root@192.168.1.20 \
     --set HAOS_BACKUP_TYPE=partial \
     --set HAOS_PARTIAL_FOLDERS=homeassistant,ssl
@@ -173,42 +164,30 @@ HA snapshot via the `ha` CLI — the same format as HA's own backup system.
 
 ### Minecraft (`types/minecraft.sh`)
 
-Designed to work in tandem with
-[minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup).
-The defaults match an unmodified install — only set these if you changed
-the username, install path, or backup path in `variables.json`.
+Designed to work with [minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup). The defaults match an unmodified install — only set these if you changed the username, install path, or backup path in `variables.json`.
 
 | Variable | Default | Description |
-|---|---|---|
-| `MINECRAFT_BASE` | `/home/minecraft/minecraft-server/backups` | Parent directory containing per-instance backup folders (each subdirectory is one instance) |
-| `MINECRAFT_SERVER_BASE` | `/home/minecraft/minecraft-server` | Root of the server install — used to capture `server.properties`, mods, plugins, etc. |
+| :------- | :------ | :---------- |
+| `MINECRAFT_BASE` | `/home/minecraft/minecraft-server/backups` | Parent directory containing per-instance backup folders |
+| `MINECRAFT_SERVER_BASE` | `/home/minecraft/minecraft-server` | Server root — used to capture `server.properties`, mods, plugins |
 | `MC_KEEP_WEEKLY` | `4` | How many weekly archives to include per instance |
 | `MC_KEEP_DAILY` | `0` | How many daily archives to include (0 = skip daily entirely) |
-| `MC_MIN_AGE_MINUTES` | `5` | Only include archives older than this — age-gate against in-progress compression |
+| `MC_MIN_AGE_MINUTES` | `5` | Only include archives older than this — guards against in-progress compression |
 | `MC_INCLUDE_MODS` | `true` | Include the `mods/` directory from each server instance |
 | `MC_EXTRA_PATHS` | `""` | Space-separated extra paths to always include |
 
-**The most common reason to use `--set` for Minecraft:**
-`minecraft-server-setup` lets you customise the system username and install
-path via `variables.json`. If you changed either, tell PABS during install:
+**Examples:**
 
 ```bash
 # Default minecraft-server-setup install — no --set needed
 ./install-agent.sh minecraft@192.168.1.40
 
-# Non-default username (e.g. "alice") with default path structure
+# Non-default username with default path structure
 ./install-agent.sh alice@192.168.1.40 \
     --set MINECRAFT_BASE=/home/alice/minecraft-server/backups \
     --set MINECRAFT_SERVER_BASE=/home/alice/minecraft-server
 
-# Completely custom paths
-./install-agent.sh mc@192.168.1.40 \
-    --set MINECRAFT_BASE=/srv/mc/backups \
-    --set MINECRAFT_SERVER_BASE=/srv/mc \
-    --set MC_KEEP_WEEKLY=2 \
-    --set MC_KEEP_DAILY=3
-
-# Multiple instances, include daily archives
+# Multiple instances with daily archives
 ./install-agent.sh minecraft@192.168.1.40 \
     --set MC_KEEP_WEEKLY=4 \
     --set MC_KEEP_DAILY=2 \
@@ -219,30 +198,26 @@ path via `variables.json`. If you changed either, tell PABS during install:
 
 ### Generic (`types/generic.sh`)
 
-Catch-all for Pi-hole, AdGuard Home, Nginx, Vaultwarden, Gitea, and any
-other plain Debian/Ubuntu VM or LXC. Backs up `/etc` (the primary config
-store for most Linux services), cron jobs, scripts, and packages.
+Catch-all for Pi-hole, AdGuard Home, Nginx, Vaultwarden, Gitea, and any plain Debian/Ubuntu VM or LXC. Backs up `/etc/` (the primary config store for most Linux services), cron jobs, scripts, and the package list.
 
 | Variable | Default | Description |
-|---|---|---|
-| `GENERIC_INCLUDE_ETC` | `true` | Back up `/etc` (full) |
+| :------- | :------ | :---------- |
+| `GENERIC_INCLUDE_ETC` | `true` | Back up `/etc/` (full) |
 | `GENERIC_INCLUDE_CRON` | `true` | Back up crontabs |
-| `GENERIC_INCLUDE_SCRIPTS` | `true` | Back up `/usr/local/bin` and `/root/scripts` |
+| `GENERIC_INCLUDE_SCRIPTS` | `true` | Back up `/usr/local/bin/` and `/root/scripts/` |
 | `GENERIC_INCLUDE_PACKAGES` | `true` | Save dpkg selections and apt marks |
-| `GENERIC_EXCLUDE_PATHS` | `""` | Space-separated paths to exclude from `/etc` (rsync `--exclude` syntax) |
+| `GENERIC_EXCLUDE_PATHS` | `""` | Space-separated paths to exclude from `/etc/` (rsync `--exclude` syntax) |
 | `EXTRA_PATHS` | `""` | Space-separated extra paths to always include |
 
-The agent also detects common services that store data outside `/etc` and
-logs a hint if found (AdGuard, Vaultwarden, Gitea, Nextcloud, etc.) — add
-their data paths to `EXTRA_PATHS` to include them.
+The agent detects common services that store data outside `/etc/` and logs a hint if found (AdGuard Home, Vaultwarden, Gitea, Nextcloud, etc.) — add their data paths to `EXTRA_PATHS` to include them.
 
 **Examples:**
 
 ```bash
-# Pi-hole — /etc/pihole is already under /etc, no EXTRA_PATHS needed
+# Pi-hole — /etc/pihole/ is already under /etc/, no EXTRA_PATHS needed
 ./install-agent.sh root@192.168.1.30
 
-# AdGuard Home — data dir is outside /etc
+# AdGuard Home — data dir is outside /etc/
 ./install-agent.sh root@192.168.1.31 \
     --set EXTRA_PATHS=/opt/AdGuardHome
 
@@ -254,65 +229,63 @@ their data paths to `EXTRA_PATHS` to include them.
 ./install-agent.sh www-data@192.168.1.33 \
     --set EXTRA_PATHS=/var/www/nextcloud/config
 
-# Exclude sensitive paths from /etc backup
+# Exclude sensitive paths from /etc/ backup
 ./install-agent.sh root@192.168.1.34 \
     --set GENERIC_EXCLUDE_PATHS=/etc/ssl/private
 ```
 
 ---
 
-## SSH key setup
+## SSH key management
 
-`install-agent.sh` registers the VM's SSH host key in
-`/root/.ssh/pabs_known_hosts` automatically. This enables
-`StrictHostKeyChecking=yes` in the cron backup runs (configured in
-`VM_AGENT_SSH_OPTS` in `config.sh`), which protects against
-man-in-the-middle attacks on the SSH connection.
+`install-agent.sh` registers each VM's SSH host key in `/root/.ssh/pabs_known_hosts` automatically. This file is used by `VM_AGENT_SSH_OPTS` in `config.sh` with `StrictHostKeyChecking=yes`, protecting against MITM attacks on the backup channel.
 
-If a VM's host key changes (e.g. after an OS reinstall), re-run
-`install-agent.sh` to update the registered key:
+If a VM's host key changes (e.g. after an OS reinstall), re-run `install-agent.sh` to update the registered key:
 
 ```bash
 ./install-agent.sh root@<vm-ip>
 ```
 
-To manually inspect or remove a registered key:
+Inspect or remove a registered key manually:
 
 ```bash
 ssh-keygen -F <vm-ip> -f /root/.ssh/pabs_known_hosts   # check if registered
 ssh-keygen -R <vm-ip> -f /root/.ssh/pabs_known_hosts   # remove
 ```
 
+The known hosts file has `chmod 600` applied by `install-agent.sh` on creation.
+
 ---
 
 ## Updating agents
 
-To update the agent code on a VM (e.g. after a PABS upgrade), re-run
-`install-agent.sh`. It will rsync the latest agent files and re-apply
-any previously set configuration values you pass again via `--set`.
+Re-run `install-agent.sh` after a PABS upgrade to push the latest agent code to a VM:
 
-The agent version is recorded in `agent-meta.txt` inside each bundle, so
-you can verify which version produced a given backup.
+```bash
+./install-agent.sh root@<vm-ip>
+```
+
+It rsyncs the latest agent files and re-applies any `--set` values you pass. The agent version is recorded in `agent-meta.txt` inside each bundle, so you can verify which version produced a given backup.
 
 ---
 
 ## Bundle structure
 
-Each agent bundle is a `.tar.zst` archive containing:
+Each bundle is a `.tar.zst` archive:
 
 ```
 agent-meta.txt          PABS agent version, type, hostname, date
 restore-notes.txt       Type-specific restore instructions (human-readable)
-<type-specific files>   Compose files, HA snapshot, MC archives, /etc, etc.
+<type-specific files>   Compose files, HA snapshot, MC archives, /etc/, etc.
 system-state/           OS info, package list, hostname
 ```
 
-To inspect without extracting:
+Inspect without extracting:
 ```bash
 tar -I zstd -tf vm-agents/my-vm/pabs-bundle-my-vm-<date>.tar.zst
 ```
 
-To read the restore notes:
+Read restore notes:
 ```bash
 tar -I zstd -xOf vm-agents/my-vm/pabs-bundle-my-vm-<date>.tar.zst restore-notes.txt
 ```

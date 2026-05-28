@@ -1,86 +1,103 @@
 # PABS — Proxmox Automated Backup System
 
-Backs up a Proxmox node's configuration, VM/CT definitions, network settings,
-cron jobs, SSH keys, firewall rules, package state, and per-VM restore bundles
-to a USB stick — then optionally syncs to a cloud or SFTP remote.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Proxmox%20VE%207.x%20%2F%208.x-e57000.svg)](https://www.proxmox.com/)
+[![Tests](https://img.shields.io/badge/Tests-BATS-brightgreen.svg)](tests/pabs.bats)
+[![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25.svg)](backup.sh)
 
-Designed to be **power-loss safe**, **restore-ready out of the box**, and
-**configurable entirely from one file** (`config.sh`) without ever touching
-library or agent code.
+Backs up a Proxmox node's configuration, VM/CT definitions, network settings, cron jobs, SSH keys, firewall rules, package state, and per-VM restore bundles to a USB stick — then optionally syncs to any rclone-compatible remote (Google Drive, Backblaze, SFTP, etc.).
+
+**Power-loss safe. Atomic commit. Zero external runtime dependencies beyond standard Debian tooling.**
+
+Each completed backup drops a self-contained `proxmox-restore.sh` and `DISASTER-RECOVERY.md` directly into the backup folder. No dependency on this repo at restore time.
+
+---
+
+## Disaster recovery
+
+This is what a full restore looks like. Mount the USB, pick a backup, run one script:
+
+```bash
+mount /dev/sdX1 /mnt/backup-usb
+cd /mnt/backup-usb/proxmox-backup/2026-05-25_03-00-00/
+chmod +x proxmox-restore.sh && ./proxmox-restore.sh
+```
+
+The script walks through each section interactively (`configs`, `ssh`, `firewall`, `vms`, `vm-agents`). Target a single section with `--section ssh`, or preview every action without writing anything with `--dry-run`.
+
+Full restore procedures: [`docs/restore.md`](docs/restore.md)
 
 ---
 
 ## How it works
 
 ```
-Proxmox host
-│
-├── config.sh          ← the only file you edit
-├── backup.sh          ← run this (or schedule via cron)
-│
-│   1. Pre-flight checks (USB mounted, space, UUID)
-│   2. Stage everything on local SSD  ──→  /var/tmp/pabs-stage/.tmp-<date>/
-│   3. Generate + verify SHA256 manifest on SSD
-│   4. Atomic rsync to USB           ──→  /mnt/backup-usb/proxmox-backup/<date>/
-│   5. Re-verify manifest on USB
-│   6. Sync to offsite remote        ──→  gdrive:/proxmox-backup/<date>/  (optional)
-│   7. Rotate old backups
-│
-└── vm-agent/          ← deployed once to each VM via install-agent.sh
-    │   Called over SSH during step 2 — produces a self-contained .tar.zst bundle
-    └── types/
-        ├── docker.sh      compose files, .env, volumes, daemon config
-        ├── haos.sh        native HA snapshot (.tar) via ha CLI
-        ├── minecraft.sh   weekly archives from minecraft-server-setup
-        └── generic.sh     /etc, cron, scripts, packages (Pi-hole, AdGuard, etc.)
+┌─────────────────────────────────────────┐
+│             PROXMOX HOST                │
+│                                         │
+│  config.sh   ← the only file you edit  │
+│  backup.sh   ← run directly or via cron│
+│                                         │
+│  1. Pre-flight   (USB mount, space,     │
+│                   UUID identity check)  │
+│  2. Stage on local SSD ─────────────────┼──────────────────────────┐
+│  3. SHA256 manifest + verify on SSD     │                          │
+│  4. Atomic rsync ───────────────────────┼──────────────────┐       │
+│  5. Re-verify manifest on USB           │                  │       │
+│  6. Sync offsite ───────────────────────┼──────────────┐   │       │
+│  7. Rotate old backups                  │              │   │       │
+└─────────────────────────────────────────┘              │   │       │
+                                                         │   │       │
+┌──────────────────────────────┐  ┌─────────────────┐   │   │       │
+│         USB STICK            │  │ LOCAL SSD STAGE │   │   │       │
+│                              │  │                 │   │   │       │
+│  proxmox-backup/             │◄─│  .tmp-<date>/   │◄──┘   │       │
+│  └── <date>/                 │  │  ├── etc/       │       │       │
+│      ├── etc-pve.tar         │  │  ├── etc-pve.tar│       │       │
+│      ├── vm-ct-definitions/  │  │  ├── system-    │       │       │
+│      ├── system-state/       │  │  │   state/     │       │       │
+│      ├── vm-agents/          │  │  ├── vm-agents/ │◄──────┘       │
+│      ├── MANIFEST.sha256     │  │  └── MANIFEST.  │               │
+│      ├── proxmox-restore.sh  │  │      sha256     │               │
+│      └── DISASTER-RECOVERY.md│  └─────────────────┘               │
+│  backup.log                  │                                     │
+└──────────────────────────────┘                                     │
+                                                                     │
+┌──────────────────────────────┐                                     │
+│    OFFSITE REMOTE (optional) │◄────────────────────────────────────┘
+│                              │
+│  gdrive:proxmox-backup/      │
+│  └── <date>/  (AES-256 blobs)│
+└──────────────────────────────┘
 ```
 
-Each completed backup contains a self-contained `proxmox-restore.sh` and
-`DISASTER-RECOVERY.md` — no dependency on this repository at restore time.
+VM agents run inside each guest during step 2, called over SSH from the Proxmox host. Each produces a self-contained `.tar.zst` restore bundle:
+
+| Agent type | Collected |
+| :--------- | :-------- |
+| `docker`   | All `docker-compose.yml` + `.env` files, Docker daemon config, named volumes (under threshold), package list |
+| `haos`     | Full native HA snapshot (`.tar`) via `ha` CLI — one-click restore in the HA UI |
+| `minecraft`| Weekly `.tar.zst` archives, `server.properties`, ops/whitelist/banned lists, mods, plugins |
+| `generic`  | `/etc/` (full), cron jobs, `/usr/local/bin/`, `/root/scripts/`, package list |
 
 ---
 
-## File layout
+## Prerequisites
 
-```
-pabs/
-├── backup.sh              Entry point — run this or schedule with cron
-├── config.sh              Your configuration — the only file you need to edit
-├── setup.sh               Interactive setup wizard — start here
-├── install-agent.sh       One-time setup: deploys the VM agent to a VM over SSH
-├── pabs-status.sh         Health check — USB, backup state, VM reachability, offsite
-├── docs/
-│   ├── configuration.md   Every config.sh variable documented in full
-│   ├── vm-agents.md       How to set up and configure VM/LXC agent backups
-│   ├── offsite.md         Cloud and SFTP offsite sync with encryption
-│   ├── restore.md         Step-by-step restore and disaster recovery procedures
-│   └── architecture.md   Design decisions, data flow, and integrity guarantees
-├── lib/
-│   ├── core.sh            Logging, lock, trap, alerts, offsite sync
-│   ├── preflight.sh       Pre-flight checks (USB, space)
-│   └── sections.sh        The 8 backup sections
-├── helpers/
-│   ├── manifest.sh        SHA256 manifest generation, verification, rotation
-│   └── output.sh          Generates restore script, README, DR playbook per backup
-├── tests/
-│   └── pabs.bats          Automated test suite (requires bats-core)
-└── vm-agent/
-    ├── agent.sh           Runs inside the VM — auto-detects type, produces bundle
-    └── types/
-        ├── docker.sh
-        ├── haos.sh
-        ├── minecraft.sh
-        └── generic.sh
-```
+- Proxmox VE 7.x or 8.x (Debian-based host)
+- Root access (direct root shell or `sudo`)
+- A USB stick already partitioned with a single partition
+- Internet access during initial setup only (dependency installation)
+- SSH key-based access to any VMs you want to back up via agents
 
 ---
 
 ## Quick start
 
-### 1. Install
+### 1. Clone and install
 
 ```bash
-git clone <repo> /opt/pabs
+git clone https://github.com/your-org/pabs /opt/pabs
 chmod +x /opt/pabs/*.sh
 ```
 
@@ -90,29 +107,17 @@ chmod +x /opt/pabs/*.sh
 sudo bash /opt/pabs/setup.sh
 ```
 
-The wizard walks through every setting, installs dependencies, deploys VM
-agents, configures offsite sync, adds a cron job, and offers to run the first
-backup — all from one interactive session. It is safe to re-run at any time
-to update settings or add new VMs.
+The wizard installs dependencies, configures the USB target, deploys VM agents, sets up offsite sync, and schedules a cron job — all in one session. Safe to re-run at any time.
 
-To jump directly to a specific step:
-```bash
-sudo bash setup.sh --step offsite   # reconfigure offsite only
-sudo bash setup.sh --step agents    # add a new VM agent
-```
-
-**Available steps:** `deps` | `usb` | `notifications` | `agents` | `offsite` | `cron` | `run`
-
-### Manual configuration (alternative to the wizard)
-
-Edit `config.sh` directly — it is the **only file you need to touch**. At minimum:
+Jump to a specific step directly:
 
 ```bash
-USB_MOUNT="/mnt/backup-usb"
-TARGET_UUID=""        # get with: blkid /dev/sdX1  (leave empty to skip UUID check)
+sudo bash /opt/pabs/setup.sh --step offsite   # reconfigure offsite only
+sudo bash /opt/pabs/setup.sh --step agents    # add a new VM agent
+sudo bash /opt/pabs/setup.sh --step usb       # change USB target or UUID
 ```
 
-See [`docs/configuration.md`](docs/configuration.md) for every option.
+Available steps: `deps` | `usb` | `notifications` | `agents` | `offsite` | `cron` | `run`
 
 ### 3. Mount the USB stick
 
@@ -121,6 +126,7 @@ mount /dev/sdX1 /mnt/backup-usb
 ```
 
 For automatic mount at boot, add to `/etc/fstab`:
+
 ```
 UUID=<your-uuid>  /mnt/backup-usb  vfat  defaults,nofail  0  0
 ```
@@ -128,60 +134,82 @@ UUID=<your-uuid>  /mnt/backup-usb  vfat  defaults,nofail  0  0
 ### 4. Test run
 
 ```bash
-/opt/pabs/backup.sh --dry-run    # checks only, no data written
-/opt/pabs/backup.sh              # full backup
+/opt/pabs/backup.sh --dry-run   # pre-flight checks only, no data written
+/opt/pabs/backup.sh             # full backup
 ```
 
-Logs go to `/mnt/backup-usb/proxmox-backup/backup.log`.
+Logs land at `/mnt/backup-usb/proxmox-backup/backup.log`.
 
-### 5. Schedule with cron
+### 5. Schedule
 
 ```bash
 crontab -e
 ```
 
 ```
-# Run every Sunday at 03:00
+# Every Sunday at 03:00
 0 3 * * 0 /opt/pabs/backup.sh
 ```
 
-### 6. Add VM agent backups (optional)
+---
 
-Deploy the agent to each VM once — all configuration is passed from the
-Proxmox host via `--set`, no SSH-in-and-edit required afterwards:
+## Manual configuration (skip the wizard)
+
+`config.sh` is the only file you need to edit. Minimum to get running:
 
 ```bash
-# Standard VM — auto-detect type, use defaults
-./install-agent.sh root@192.168.1.10
+USB_MOUNT="/mnt/backup-usb"
+TARGET_UUID=""   # get with: blkid /dev/sdX1  (leave empty to skip UUID check)
+```
 
-# Minecraft VM with a non-default user and path
-./install-agent.sh alice@192.168.1.40 \
-    --set MINECRAFT_BASE=/home/alice/servers/backups \
-    --set MINECRAFT_SERVER_BASE=/home/alice/servers
+> **Security:** `config.sh` may contain webhook URLs, API tokens, and encryption passphrases. Restrict it immediately after setup:
+> ```bash
+> chmod 600 /opt/pabs/config.sh
+> ```
+> Secrets are redacted from the copy stored inside each backup — the `config.sh` written to the backup folder has all token and password values stripped.
+
+Full variable reference: [`docs/configuration.md`](docs/configuration.md)
+
+---
+
+## VM agents (optional)
+
+Deploy once per VM. All configuration is passed from the Proxmox host at deploy time via `--set`:
+
+```bash
+# Auto-detect type, use defaults
+./install-agent.sh root@192.168.1.10
 
 # Docker VM with Portainer
 ./install-agent.sh root@192.168.1.20 \
     --set DOCKER_MANAGER=portainer \
     --set PORTAINER_TOKEN=ptr_abc123
+
+# Minecraft VM with non-default paths
+./install-agent.sh alice@192.168.1.40 \
+    --set MINECRAFT_BASE=/home/alice/servers/backups \
+    --set MINECRAFT_SERVER_BASE=/home/alice/servers
 ```
 
-Then add each VM to `config.sh`:
+Then register each VM in `config.sh`:
 
 ```bash
 VM_AGENTS=(
-    "docker-vm    192.168.1.10   root     /opt/pabs-agent/agent.sh"
-    "haos         192.168.1.20   root     /opt/pabs-agent/agent.sh"
-    "mc-server    192.168.1.40   alice    /opt/pabs-agent/agent.sh"
+    "docker-vm   192.168.1.10  root   /opt/pabs-agent/agent.sh"
+    "haos        192.168.1.20  root   /opt/pabs-agent/agent.sh"
+    "mc-server   192.168.1.40  alice  /opt/pabs-agent/agent.sh"
 )
 ```
 
-See [`docs/vm-agents.md`](docs/vm-agents.md) for the full guide.
+Full guide: [`docs/vm-agents.md`](docs/vm-agents.md)
 
-### 7. Set up offsite sync (optional, recommended)
+---
+
+## Offsite sync (optional, recommended)
 
 ```bash
 apt install rclone
-rclone config    # set up Google Drive, OneDrive, Backblaze, etc.
+rclone config   # configure Google Drive, Backblaze, OneDrive, SFTP, etc.
 ```
 
 In `config.sh`:
@@ -189,82 +217,137 @@ In `config.sh`:
 ```bash
 RCLONE_REMOTE="gdrive:proxmox-backup"
 RCLONE_KEEP_MIN=1
-RCLONE_MAX_STORAGE_GB=14    # stay within Google Drive's 15 GB free tier
+RCLONE_MAX_STORAGE_GB=14        # stays within Google Drive's 15 GB free tier
 RCLONE_ENCRYPTION_PASSWORD="a strong passphrase"
 ```
 
-See [`docs/offsite.md`](docs/offsite.md) for the full guide.
+Offsite copies are encrypted with AES-256 via rclone's built-in crypt backend before upload. The passphrase never leaves `config.sh`.
 
-### 8. Health check
+Full guide: [`docs/offsite.md`](docs/offsite.md)
+
+---
+
+## Health check
 
 ```bash
 /opt/pabs/pabs-status.sh
 ```
 
-Reports: USB state, latest backup integrity, VM agent reachability, offsite
-remote status and storage usage, local stage space. Returns 0 (OK), 1 (error),
-2 (warning).
+Reports: USB mount state, USB drive health (kernel I/O errors, filesystem error counters, SMART data), latest backup integrity (manifest re-verification), VM agent reachability, offsite remote status and storage usage, local stage space.
+
+Exit codes: `0` = healthy, `1` = error, `2` = warning.
 
 ---
 
-## What is and isn't backed up
+## What gets backed up
 
-**Proxmox host — always backed up:**
+### Proxmox host (always)
 
-| What | Where in backup |
-|---|---|
-| `/etc/pve` (cluster/node config) | `etc-pve.tar` (pmxcfs-safe tar snapshot) |
-| VM and CT configs (`qm config`, `pct config`) | `vm-ct-definitions/` |
-| Network, hosts, hostname, resolv.conf | `etc/` |
-| APT sources | `etc/apt/` |
-| Cron jobs | `etc/cron*`, `var/spool/cron/` |
+| What | Path in backup |
+| :--- | :------------- |
+| `/etc/pve/` — cluster and node config | `etc-pve.tar` (pmxcfs-safe snapshot) |
+| VM and CT definitions (`qm config`, `pct config`) | `vm-ct-definitions/` |
+| Network config, `/etc/hosts`, hostname, `resolv.conf` | `etc/` |
+| APT sources and package selections | `etc/apt/`, `system-state/` |
+| Cron jobs (all users) | `etc/cron*/`, `var/spool/cron/` |
 | Firewall rules (nftables, iptables, PVE) | `etc/nftables.conf`, `etc/iptables/`, `etc/pve/firewall/` |
 | SSH keys and daemon config | `etc/ssh/`, `root/.ssh/` |
 | Installed packages (dpkg selections + holds) | `system-state/` |
 | Disk layout, kernel version, Proxmox version | `system-state/` |
-| ZFS pool/dataset info (if `BACKUP_ZFS=true`) | `system-state/zfs-*` |
-| LVM VG configs (restorable with vgcfgrestore) | `system-state/lvm-*` |
-| `/usr/local/bin`, `/root/scripts` | preserved path |
+| ZFS pool/dataset info (if `BACKUP_ZFS=true`) | `system-state/zfs-*/` |
+| LVM VG configs (restorable with `vgcfgrestore`) | `system-state/lvm-*/` |
+| `/usr/local/bin/`, `/root/scripts/` | preserved path |
 | `backup.sh` and `config.sh` (secrets redacted) | `backup.sh`, `config.sh` |
 
-**VM/LXC agent bundles — backed up when `VM_AGENTS` is configured:**
+### VM/LXC agent bundles (when `VM_AGENTS` is configured)
 
-| VM type | What's in the bundle |
-|---|---|
+| VM type | Bundle contents |
+| :------ | :-------------- |
 | Docker | All `docker-compose.yml` + `.env` files, Docker daemon config, named volumes (under threshold), package list |
 | Home Assistant OS | Full native HA snapshot (`.tar`) — one-click restore via HA UI |
-| Minecraft | Weekly `.tar.zst` archives from `minecraft-server-setup`, `server.properties`, ops/whitelist/banned, mods, plugins |
-| Generic | `/etc` (full), cron jobs, `/usr/local/bin`, `/root/scripts`, package list |
+| Minecraft | Weekly `.tar.zst` archives, `server.properties`, ops/whitelist/banned lists, mods, plugins |
+| Generic | `/etc/` (full), cron jobs, `/usr/local/bin/`, `/root/scripts/`, package list |
 
-**Not backed up:**
+### Not backed up
 
-- VM and CT disk images — not needed. Agent bundles contain full application state. Rebuild path: fresh OS → `install-agent.sh` → restore bundle. See [`docs/restore.md`](docs/restore.md).
-- Docker volumes over the auto-include size threshold (configurable; opt-in via `DOCKER_INCLUDE_VOLUMES`)
-- Minecraft world data directly — the agent copies archives that `minecraft-server-setup` already produced
+- VM and CT disk images. Not needed — agent bundles contain full application state. Rebuild path: fresh OS install → `install-agent.sh` → restore bundle. See [`docs/restore.md`](docs/restore.md).
+- Docker volumes over the auto-include size threshold (configurable; opt in via `DOCKER_INCLUDE_VOLUMES`).
+- Minecraft world data directly — the agent copies the archives that `minecraft-server-setup` already produced.
 
 ---
 
-## Key design properties
+## Integrity guarantees
 
-- **Staging on local SSD first** — USB sees one sequential write, minimising flash wear and corruption risk
-- **UUID targeting** — refuses to write to any drive other than the configured one
-- **Pre-commit integrity check** — SHA256 manifest verified on local SSD before any data reaches USB
-- **Atomic commit** — written to `<date>.tmp/` then renamed; a partial transfer never appears as complete
-- **Post-transfer verification** — manifest re-checked on USB after transfer
-- **Auto space recovery** — purges the oldest backup if USB is full; refuses if it's the last copy
-- **Dual-channel alerts** — Discord webhook (primary) + local mail (fallback)
-- **3-2-1 offsite sync** — optional rclone sync with retention limits and transparent encryption
+| Property | Behavior |
+| :-------- | :------- |
+| Staged write | All data assembled on local SSD first — USB sees one sequential write, minimizing flash wear and partial-write corruption |
+| UUID targeting | Refuses to write to any drive other than the one matching `TARGET_UUID` |
+| Pre-commit verification | SHA256 manifest verified on local SSD before a single byte reaches USB |
+| Atomic commit | Written to `<date>.tmp/` then renamed — a partial transfer never appears as a valid backup |
+| Post-transfer verification | Manifest re-checked on USB after transfer, catching write errors and silent bit rot |
+| Auto space recovery | Purges the oldest backup when USB is full; refuses if it would be the last remaining copy |
+| Drive health monitoring | `pabs-status.sh` checks kernel I/O errors, forced read-only remounts, filesystem error counters, and SMART health |
+| Dual-channel alerts | Discord webhook (primary) + local mail (fallback) on both success and failure |
+| Offsite encryption | AES-256 via rclone crypt before upload; provider never sees plaintext |
+
+---
+
+## File layout
+
+<details>
+<summary>Expand file tree</summary>
+
+```
+pabs/
+├── backup.sh               Entry point — run directly or schedule with cron
+├── config.sh               Your configuration — the only file you edit
+├── setup.sh                Interactive setup wizard — start here
+├── install-agent.sh        Deploys the VM agent to a guest over SSH (run once per VM)
+├── pabs-status.sh          Health check — USB, backup integrity, agents, offsite
+├── docs/
+│   ├── setup-wizard.md     Wizard guide, step reference, module structure
+│   ├── configuration.md    Every config.sh variable with type, default, and examples
+│   ├── vm-agents.md        Agent setup, --set flags, per-type config reference
+│   ├── offsite.md          Cloud remotes, free-tier sizing, encryption, retention
+│   ├── usb-health.md       USB health checks, signal layers, example output
+│   ├── restore.md          Restore procedures, DR walkthrough, bundle extraction
+│   └── architecture.md     Data flow, integrity model, module structure, design decisions
+├── lib/
+│   ├── core.sh             Logging, lock file, trap, alerts
+│   ├── offsite.sh          rclone encryption, upload, retention pruning
+│   ├── preflight.sh        Pre-flight checks (USB mount, free space, UUID)
+│   ├── sections.sh         The 8 backup sections
+│   └── usb_health.sh       USB drive health signal checks
+├── helpers/
+│   ├── manifest.sh         SHA256 manifest generation, verification, rotation
+│   └── output.sh           Writes restore script, README, and DR playbook per backup
+├── setup/
+│   ├── ui.sh               Terminal output and input helpers
+│   ├── config_editor.sh    config.sh read/write functions
+│   └── steps/              One file per wizard step (deps, usb, agents, offsite, ...)
+├── tests/
+│   └── pabs.bats           Automated test suite (requires bats-core)
+└── vm-agent/
+    ├── agent.sh            Runs inside the VM — auto-detects type, produces bundle
+    └── types/
+        ├── docker.sh
+        ├── haos.sh
+        ├── minecraft.sh
+        └── generic.sh
+```
+
+</details>
 
 ---
 
 ## Documentation
 
 | Doc | Contents |
-|---|---|
+| :-- | :------- |
+| [`docs/setup-wizard.md`](docs/setup-wizard.md) | Wizard guide, step reference, module structure |
 | [`docs/configuration.md`](docs/configuration.md) | Every `config.sh` variable with type, default, and examples |
 | [`docs/vm-agents.md`](docs/vm-agents.md) | Agent setup, `--set` flags, per-type config reference |
 | [`docs/offsite.md`](docs/offsite.md) | Cloud remotes, free-tier sizing, encryption, retention |
+| [`docs/usb-health.md`](docs/usb-health.md) | USB health checks, signal layers, example output |
 | [`docs/restore.md`](docs/restore.md) | Restore procedures, DR walkthrough, bundle extraction |
-| [`docs/architecture.md`](docs/architecture.md) | Data flow, integrity guarantees, design decisions |
-
-Run `sudo bash setup.sh` for guided setup, or edit `config.sh` directly and refer to the docs above.
+| [`docs/architecture.md`](docs/architecture.md) | Data flow, integrity guarantees, module structure, design decisions |
