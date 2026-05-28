@@ -124,9 +124,29 @@ rsync -a --delete \
 rrun "chmod +x $REMOTE_DIR/agent.sh"
 rrun "chmod 644 $REMOTE_DIR/types/*.sh"
 
+```bash
 # --- Run install mode on remote ---
 log "Running agent --install on $TARGET ..."
-rrun "$REMOTE_DIR/agent.sh --install"
+
+INSTALL_OUTPUT="$(
+    rrun "$REMOTE_DIR/agent.sh --install" 2>&1
+)"
+INSTALL_RC=$?
+
+echo "$INSTALL_OUTPUT"
+
+# Some agent install paths may print success but return non-zero
+# because of a stray grep/test/set -e interaction.
+# Treat explicit success text as authoritative.
+if [[ $INSTALL_RC -ne 0 ]]; then
+    if grep -q "Install complete" <<< "$INSTALL_OUTPUT"; then
+        log "WARNING: agent returned non-zero but install completed successfully"
+    else
+        log "ERROR: remote install failed"
+        exit $INSTALL_RC
+    fi
+fi
+```
 
 # --- Apply --set overrides into /etc/pabs-agent/config ---
 # For each KEY=VALUE:
@@ -205,17 +225,55 @@ log "Detecting VM type..."
 DETECTED_TYPE=$(rrun "$REMOTE_DIR/agent.sh --type" 2>/dev/null | tail -1 || echo "unknown")
 log "Detected type: $DETECTED_TYPE"
 
-# --- Print the config line ---
-log ""
-log "============================================================"
-log "Add this to VM_AGENTS in PABS config.sh:"
-log ""
+```bash
+# --- Auto-register VM in config.sh ---
+CONFIG_FILE="$SCRIPT_DIR/config.sh"
 
-# Extract just the host/IP portion for the label suggestion
 HOST_PART="${TARGET##*@}"
-LABEL="${HOST_PART//./-}"  # replace dots with dashes for a clean label
+LABEL="${HOST_PART//./-}"
+VM_ENTRY="\"$LABEL  $HOST_PART  ${TARGET%%@*}  $REMOTE_DIR/agent.sh\""
 
-echo "  \"$LABEL  $HOST_PART  ${TARGET%%@*}  $REMOTE_DIR/agent.sh\""
 log ""
-log "Format: \"label  ip-or-hostname  ssh-user  agent-path\""
+log "Registering VM agent in config.sh ..."
+
+if grep -Fq "$VM_ENTRY" "$CONFIG_FILE"; then
+    log "  ✓ VM already present in VM_AGENTS"
+else
+    python3 - "$CONFIG_FILE" "$VM_ENTRY" << 'PYEOF'
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+entry = sys.argv[2]
+
+text = config_path.read_text()
+
+start = text.find("VM_AGENTS=(")
+if start == -1:
+    print("VM_AGENTS block not found", file=sys.stderr)
+    sys.exit(1)
+
+end = text.find(")", start)
+if end == -1:
+    print("Malformed VM_AGENTS block", file=sys.stderr)
+    sys.exit(1)
+
+block = text[start:end]
+
+if entry not in block:
+    new_block = block + f"    {entry}\n"
+    text = text[:start] + new_block + text[end:]
+
+config_path.write_text(text)
+
+print("Added VM entry successfully")
+PYEOF
+
+    log "  ✓ Added VM to VM_AGENTS"
+fi
+
+log ""
 log "============================================================"
+log "VM registration complete"
+log "============================================================"
+```
