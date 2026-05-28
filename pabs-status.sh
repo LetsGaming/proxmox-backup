@@ -4,6 +4,7 @@
 #
 # Checks the current state of PABS without running a backup:
 #   - USB mounted and space available
+#   - USB drive health: kernel I/O errors, ro-remount, filesystem errors, SMART
 #   - Most recent backup: date, size, manifest integrity
 #   - All configured VM agents: SSH reachable
 #   - Offsite remote reachable (if configured)
@@ -31,6 +32,7 @@ for arg in "$@"; do
 done
 
 source "$PABS_DIR/config.sh"
+source "$PABS_DIR/lib/usb_health.sh"
 
 PASS="✓"; FAIL="✗"; WARN="⚠"
 OVERALL=0  # 0=OK, 1=error, 2=warning
@@ -70,6 +72,11 @@ if mountpoint -q "$USB_MOUNT" 2>/dev/null; then
     _ok "$BACKUP_COUNT backup(s) in $BACKUP_ROOT"
 else
     _fail "USB not mounted at $USB_MOUNT"
+fi
+
+# Run USB drive health checks only when the drive is mounted
+if [[ "$USB_OK" == "true" ]]; then
+    usb_health_check "$USB_MOUNT" "$BACKUP_ROOT"
 fi
 
 # ---------------------------------------------------------------------------
