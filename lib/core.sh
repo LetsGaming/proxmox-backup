@@ -38,7 +38,8 @@ die() {
 
 dispatch_alert() {
     local message="$1"
-    local full_msg="[$(hostname)] Proxmox Backup v${SCRIPT_VERSION}: $message"
+    local full_msg
+    full_msg="[$(hostname)] Proxmox Backup v${SCRIPT_VERSION}: $message"
 
     # python3 handles JSON serialisation correctly for all edge cases (tabs,
     # control characters, non-ASCII, nested quotes). Message passed as argv —

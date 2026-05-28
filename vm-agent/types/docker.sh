@@ -176,7 +176,7 @@ _backup_portainer() {
 
             # Write each stack's compose content to staging
             export PABS_STAGE_DIR="$STAGE_DIR"
-            echo "$stacks_json" | python3 - << 'PYEOF'
+            echo "$stacks_json" | python3 -c '
 import json, sys, os
 
 data = json.load(sys.stdin)
@@ -193,7 +193,7 @@ for stack in data:
             f.write(content)
 
 print(f"Exported {len(data)} stacks")
-PYEOF
+'
             _notes+=("Portainer stacks exported via API to portainer-stacks/")
         else
             log_warn "  Portainer API returned no stacks (check PORTAINER_TOKEN and PORTAINER_URL)"

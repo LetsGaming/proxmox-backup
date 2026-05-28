@@ -77,7 +77,7 @@ _offsite_prune() {
     local keep_max="${RCLONE_KEEP_MAX:-4}"
     local max_gb="${RCLONE_MAX_STORAGE_GB:-0}"
 
-    local -a remote_backups
+    local -a remote_backups=()
     mapfile -t remote_backups < <(_offsite_list_backups "$remote_root")
     local count="${#remote_backups[@]}"
     [[ $count -eq 0 ]] && return 0
@@ -160,7 +160,8 @@ offsite_sync() {
 
     # shellcheck disable=SC2206
     local -a extra_opts=($RCLONE_EXTRA_OPTS)
-    local dest="${effective_remote}$(basename "$FINAL_DIR")"
+    local dest
+    dest="${effective_remote}$(basename "$FINAL_DIR")"
 
     if rclone sync "$FINAL_DIR" "$dest" \
             "${extra_opts[@]}" \

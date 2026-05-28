@@ -171,10 +171,10 @@ else
     fi
 
     # Retention config summary
-    local keep_min="${RCLONE_KEEP_MIN:-1}"
-    local keep_max="${RCLONE_KEEP_MAX:-4}"
-    local max_gb="${RCLONE_MAX_STORAGE_GB:-0}"
-    local retention_msg="min=${keep_min}"
+    keep_min="${RCLONE_KEEP_MIN:-1}"
+    keep_max="${RCLONE_KEEP_MAX:-4}"
+    max_gb="${RCLONE_MAX_STORAGE_GB:-0}"
+    retention_msg="min=${keep_min}"
     [[ $keep_max -gt 0 ]] && retention_msg+=", max=${keep_max}" || retention_msg+=", max=unlimited"
     [[ $max_gb -gt 0 ]]   && retention_msg+=", cap=${max_gb}GB" || retention_msg+=", cap=unlimited"
     _ok "Retention policy: $retention_msg"
@@ -184,10 +184,8 @@ else
         _ok "Remote reachable: $RCLONE_REMOTE"
 
         # Count existing offsite backups and show storage usage
-        local offsite_count
         offsite_count=$(rclone lsf "$RCLONE_REMOTE" --dirs-only 2>/dev/null \
             | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}/$' || echo 0)
-        local offsite_gb
         offsite_gb=$(rclone size "$RCLONE_REMOTE" --json 2>/dev/null \
             | python3 -c "import json,sys; b=json.load(sys.stdin).get('bytes',0); print(round(b/1073741824,2))" \
             2>/dev/null || echo "?")

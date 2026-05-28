@@ -15,7 +15,7 @@ generate_and_verify_manifest() {
 
     local manifest="$STAGE_DIR/MANIFEST.sha256"
     (
-        cd "$STAGE_DIR"
+        cd "$STAGE_DIR" || die "Cannot cd into STAGE_DIR: $STAGE_DIR"
         find . -type f ! -name "MANIFEST.sha256" -print0 \
             | sort -z \
             | xargs -0 sha256sum \

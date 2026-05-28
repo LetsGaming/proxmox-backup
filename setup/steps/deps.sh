@@ -5,7 +5,7 @@ _step_deps() {
     [[ -n "$JUMP_STEP" && "$JUMP_STEP" != "deps" ]] && return
     _header "Step 1 of 7 — Dependencies"
 
-    local -a missing optional_missing
+    local -a missing=() optional_missing=()
 
     _step "Checking required packages..."
     for pkg in rsync zstd tar gzip curl python3 ssh; do

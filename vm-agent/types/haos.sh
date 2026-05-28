@@ -121,7 +121,7 @@ _wait_for_backup() {
         list_json=$(_ha backup list 2>/dev/null) || true
 
         local found
-        found=$(echo "$list_json" | python3 - "$slug" << 'PYEOF'
+        found=$(echo "$list_json" | python3 -c '
 import json, sys
 slug = sys.argv[1]
 try:
@@ -134,8 +134,7 @@ try:
             break
 except Exception:
     pass
-PYEOF
-        ) || true
+' "$slug") || true
 
         if [[ "$found" == "found" ]]; then
             log "  ✓ Backup '$slug' ready"
@@ -188,7 +187,7 @@ _prune_old_host_backups() {
 
     # Collect pabs-* backup slugs sorted by date (oldest first)
     local old_slugs
-    old_slugs=$(echo "$list_json" | python3 - "$HAOS_BACKUP_NAME" "$HAOS_KEEP_ON_HOST" << 'PYEOF'
+    old_slugs=$(echo "$list_json" | python3 -c '
 import json, sys
 prefix = sys.argv[1]
 keep = int(sys.argv[2])
@@ -203,8 +202,7 @@ try:
         print(b["slug"])
 except Exception as e:
     import sys; print(f"# error: {e}", file=sys.stderr)
-PYEOF
-    ) || true
+' "$HAOS_BACKUP_NAME" "$HAOS_KEEP_ON_HOST") || true
 
     if [[ -z "$old_slugs" ]]; then
         log "  Nothing to prune"
