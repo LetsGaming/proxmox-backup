@@ -114,15 +114,29 @@ rrun "command -v zstd   >/dev/null || apt-get install -y zstd   >/dev/null 2>&1"
 # python3 is required by some handlers (HAOS JSON parsing, Portainer API)
 rrun "command -v python3 >/dev/null || apt-get install -y python3 >/dev/null 2>&1"
 
+```bash id="obex9j"
 # --- Copy agent files ---
 log "Copying agent files to $TARGET:$REMOTE_DIR ..."
+
 rrun "mkdir -p $REMOTE_DIR/types"
-rsync -a --delete \
-    -e "ssh ${SSH_OPTS[*]@Q}" \
-    "$AGENT_SOURCE/" "$TARGET:$REMOTE_DIR/"
+
+RSYNC_OUTPUT="$(
+    rsync -a --delete \
+        -e "ssh ${SSH_OPTS[*]@Q}" \
+        "$AGENT_SOURCE/" "$TARGET:$REMOTE_DIR/" 2>&1
+)"
+RSYNC_RC=$?
+
+if [[ $RSYNC_RC -ne 0 ]]; then
+    echo "$RSYNC_OUTPUT"
+    log "ERROR: rsync failed"
+    exit $RSYNC_RC
+fi
+
 # Fix permissions
 rrun "chmod +x $REMOTE_DIR/agent.sh"
 rrun "chmod 644 $REMOTE_DIR/types/*.sh"
+```
 
 ```bash
 # --- Run install mode on remote ---
