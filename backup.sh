@@ -9,13 +9,16 @@
 # File layout:
 #   backup.sh              ← you are here (run this)
 #   config.sh              ← edit this to configure your setup
+#   setup.sh               ← interactive setup wizard (start here)
 #   lib/core.sh            ← logging, lock, trap, notifications
+#   lib/offsite.sh         ← rclone encryption, upload, retention pruning
 #   lib/preflight.sh       ← pre-flight validation checks
 #   lib/sections.sh        ← 8 backup section functions + helpers
-#   lib/manifest.sh        ← SHA256 manifest generation/verification, rotation
-#   lib/output.sh          ← generates restore script and README inside each backup
+#   helpers/manifest.sh    ← SHA256 manifest generation/verification, rotation
+#   helpers/output.sh      ← generates restore script and README inside each backup
 #   vm-agent/agent.sh      ← deployed to VMs/LXCs for lightweight agent backups
 #   install-agent.sh       ← one-time setup: deploys vm-agent to a VM over SSH
+#   setup/                 ← wizard modules (ui, config_editor, step handlers)
 #
 # Usage:
 #   ./backup.sh               — normal backup run
@@ -52,6 +55,7 @@ source "$PABS_DIR/config.sh"
 # Source libs in dependency order:
 #   core.sh sets up logging and the ERR/EXIT trap; everything after needs log()
 source "$PABS_DIR/lib/core.sh"
+source "$PABS_DIR/lib/offsite.sh"
 source "$PABS_DIR/lib/preflight.sh"
 source "$PABS_DIR/lib/sections.sh"
 source "$PABS_DIR/helpers/manifest.sh"
