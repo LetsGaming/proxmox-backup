@@ -143,7 +143,7 @@ _ask_choice() {
     local i=1
     for opt in "${options[@]}"; do
         printf "  ${GREEN}%d)${RESET} %s\n" "$i" "$opt" >&2
-        (( i++ ))
+        i=$(( i + 1 ))
     done
     echo "" >&2
 

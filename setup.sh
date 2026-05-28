@@ -14,7 +14,20 @@
 # Steps: deps | usb | notifications | agents | offsite | cron | run
 # =============================================================================
 
-set -euo pipefail
+# Interactive wizard — do NOT use set -e here.
+# set -e causes silent exits on any non-zero command, which is catastrophic in
+# a wizard: the user has no idea why the program disappeared. Every step handles
+# its own errors explicitly instead.
+#
+# set -o pipefail is also omitted: grep exits 1 on no matches, which under
+# pipefail silently kills any pipeline containing a grep that found nothing.
+#
+# set -u (unbound variables) is kept — an unbound variable is a real bug that
+# should be loud, not silently treated as empty.
+#
+# backup.sh (the actual backup runner) still uses set -euo pipefail because
+# there, bailing out on any error is the right behaviour.
+set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$SCRIPT_DIR/config.sh"

@@ -183,7 +183,7 @@ release_lock
 trap - ERR EXIT
 
 # --- Summary ----------------------------------------------------------------
-BACKUP_SIZE=$(du -sh "$FINAL_DIR" 2>/dev/null | cut -f1)
+BACKUP_SIZE=$(du -sh "$FINAL_DIR" 2>/dev/null | cut -f1 || echo "unknown")
 log "========================================"
 log "Backup complete!"
 log "Location : $FINAL_DIR"

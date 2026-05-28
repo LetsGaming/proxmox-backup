@@ -118,7 +118,7 @@ _offsite_prune() {
     while [[ $survivors -lt $keep_min && ${#to_delete[@]} -gt 0 ]]; do
         log "  Offsite: rescued ${to_delete[-1]} from pruning (RCLONE_KEEP_MIN=$keep_min)"
         to_delete=("${to_delete[@]::${#to_delete[@]}-1}")
-        (( survivors++ ))
+        survivors=$(( survivors + 1 ))
     done
 
     if [[ ${#to_delete[@]} -eq 0 ]]; then

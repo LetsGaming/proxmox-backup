@@ -184,8 +184,9 @@ else
         _ok "Remote reachable: $RCLONE_REMOTE"
 
         # Count existing offsite backups and show storage usage
-        offsite_count=$(rclone lsf "$RCLONE_REMOTE" --dirs-only 2>/dev/null \
-            | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}/$' || echo 0)
+        offsite_count=$({ rclone lsf "$RCLONE_REMOTE" --dirs-only 2>/dev/null \
+            | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}/$' \
+            || true; } | wc -l)
         offsite_gb=$(rclone size "$RCLONE_REMOTE" --json 2>/dev/null \
             | python3 -c "import json,sys; b=json.load(sys.stdin).get('bytes',0); print(round(b/1073741824,2))" \
             2>/dev/null || echo "?")
