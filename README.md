@@ -26,7 +26,7 @@ Backs up a Proxmox node — configs, VM/CT definitions, SSH keys, firewall rules
 **Requires:** Proxmox VE 7.x – 9.x · root access · a partitioned USB stick · internet access during setup only
 
 ```bash
-git clone https://github.com/your-org/pabs /opt/pabs
+git clone https://github.com/LetsGaming/pabs.git /opt/pabs
 chmod +x /opt/pabs/*.sh
 sudo bash /opt/pabs/setup.sh
 ```
