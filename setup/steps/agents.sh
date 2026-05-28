@@ -216,7 +216,7 @@ _step_agents() {
 
     # Count only real (non-comment) agent entries
     local agent_count
-    agent_count=$(grep -E '^\s+"[a-zA-Z0-9]' "$CONFIG" 2>/dev/null | grep -c '\.sh"' || echo 0)
+    agent_count=$(grep -E '^\s+"[a-zA-Z0-9]' "$CONFIG" 2>/dev/null | grep '\.sh"' | wc -l)
     if [[ "$agent_count" -gt 0 ]]; then
         echo ""
         _ok "$agent_count agent(s) already configured:"
@@ -241,7 +241,7 @@ _step_agents() {
 
     # Parallelism — only offer if there are multiple agents
     local final_count
-    final_count=$(grep -E '^\s+"[a-zA-Z0-9]' "$CONFIG" 2>/dev/null | grep -c '\.sh"' || echo 0)
+    final_count=$(grep -E '^\s+"[a-zA-Z0-9]' "$CONFIG" 2>/dev/null | grep '\.sh"' | wc -l)
     if [[ "$final_count" -gt 1 ]]; then
         _step "Parallel agent backups"
         local current_parallel parallel
