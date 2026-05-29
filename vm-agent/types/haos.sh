@@ -164,22 +164,22 @@ _wait_for_backup() {
 # agent.sh will move it directly to the bundle output path — no re-compression.
 # The HA snapshot is already internally compressed; wrapping it in tar+zstd
 # would waste CPU, waste space, and require zstd in the HAOS SSH add-on shell.
+#
+# IMPORTANT: must be called directly, never inside $() — the AGENT_PREBUILT_FILE
+# assignment must propagate to the caller's scope, not be lost in a subshell.
 _register_prebuilt_file() {
     local slug="$1"
     local backup_file="$HAOS_BACKUP_DIR/${slug}.tar"
 
     [[ -f "$backup_file" ]] || die "Backup file not found at expected path: $backup_file"
 
-    local size_mb
-    size_mb=$(du -sm "$backup_file" 2>/dev/null | cut -f1)
-    log "Backup file ready: $backup_file (${size_mb}MB)"
-    log "  Passing to agent as prebuilt output — no re-compression"
-
     # agent.sh checks this variable after run_backup() returns.
     # When set, it skips tar+zstd and moves this file directly to output_path.
     AGENT_PREBUILT_FILE="$backup_file"
 
-    echo "${size_mb}"
+    HAOS_BACKUP_SIZE_MB=$(du -sm "$backup_file" 2>/dev/null | cut -f1)
+    log "Backup file ready: $backup_file (${HAOS_BACKUP_SIZE_MB}MB)"
+    log "  Passing to agent as prebuilt output — no re-compression"
 }
 
 # -----------------------------------------------------------------------------
@@ -308,8 +308,9 @@ run_backup() {
     _wait_for_backup "$slug"
 
     # Register the HA .tar as the prebuilt output — agent.sh moves it directly.
-    local size_mb
-    size_mb=$(_register_prebuilt_file "$slug")
+    # Called directly (not in a subshell) so AGENT_PREBUILT_FILE propagates.
+    _register_prebuilt_file "$slug"
+    local size_mb="${HAOS_BACKUP_SIZE_MB:-0}"
 
     # Write restore instructions
     _write_restore_notes "$slug" "$size_mb"

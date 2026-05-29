@@ -37,6 +37,10 @@
 
 set -euo pipefail
 
+# Trap ERR to log the exact line that triggered set -e, making silent
+# failures visible in the PABS backup log. The trap fires before exit.
+trap 'echo "[pabs-agent] FATAL: exited with code $? at line $LINENO (${BASH_COMMAND})" >&2' ERR
+
 AGENT_VERSION="1.0"
 AGENT_CONFIG="/etc/pabs-agent/config"
 STAGE_DIR=""
