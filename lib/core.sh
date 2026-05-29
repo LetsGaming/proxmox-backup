@@ -70,6 +70,11 @@ dispatch_alert() {
 acquire_lock() {
     mkdir -p "$LOCAL_STAGE_BASE"
     exec 9>"$LOCK_FILE"
+    # Mark the lock fd close-on-exec so child processes (pvs, vgs, lvs,
+    # vgcfgbackup, etc.) don't inherit it and emit "leaked fd" warnings.
+    python3 -c \
+        'import fcntl; fcntl.fcntl(9, fcntl.F_SETFD, fcntl.fcntl(9, fcntl.F_GETFD) | fcntl.FD_CLOEXEC)' \
+        2>/dev/null || true
     if ! flock -n 9; then
         echo "Another backup is already running (lock: $LOCK_FILE). Aborting." >&2
         exit 1

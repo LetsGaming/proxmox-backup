@@ -93,12 +93,13 @@ _trigger_backup() {
         log "  Backup will be encrypted"
     fi
 
-    # ha backup new returns a JSON object: {"slug": "abcd1234"}
+    # ha backup new returns either {"slug":"abcd1234"} (older HA versions)
+    # or {"result":"ok","data":{"job_id":"...","slug":"abcd1234"}} (newer versions).
     local result
     result=$(_ha "${cmd_args[@]}") || die "ha backup new failed: $result"
 
     local slug
-    slug=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('slug',''))" 2>/dev/null)
+    slug=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('slug') or d.get('data',{}).get('slug',''))" 2>/dev/null)
 
     [[ -n "$slug" ]] || die "ha backup new did not return a slug. Output: $result"
 

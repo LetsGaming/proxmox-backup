@@ -172,6 +172,7 @@ offsite_sync() {
 
     if rclone sync "$FINAL_DIR" "$dest" \
             "${extra_opts[@]}" \
+            --copy-links \
             --log-file="$LOG" \
             --log-level INFO \
             2>>"$LOG"; then
