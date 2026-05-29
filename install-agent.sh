@@ -131,7 +131,9 @@ log "Checking remote dependencies..."
 _check_dep() {
     local tool="$1"
     local pkg="${2:-$1}"
-    rrun "
+    # Pass the script via stdin to avoid quoting and newline-escaping issues
+    # with passing multi-line scripts as a single SSH argument.
+    ssh "${SSH_OPTS[@]}" "$TARGET" "bash -s" << SSHEOF
         if command -v ${tool} >/dev/null 2>&1; then
             exit 0
         fi
@@ -143,7 +145,7 @@ _check_dep() {
         echo '[install-agent] WARNING: ${tool} not found and no apt-get available.'
         echo '[install-agent] Install ${tool} manually on the remote system, then re-run install-agent.sh.'
         exit 0
-    "
+SSHEOF
 }
 
 _check_dep rsync
@@ -175,9 +177,16 @@ if $REMOTE_HAS_RSYNC; then
     COPY_RC=$?
 else
     log "rsync not available on remote — falling back to scp"
-    SCP_OPTS=()
-    for o in "${SSH_OPTS[@]}"; do SCP_OPTS+=(-o "${o#-o }"); done
-    [[ -n "$SSH_KEY" ]] && SCP_OPTS+=(-i "$SSH_KEY")
+    # Build scp options from scratch — do not mangle SSH_OPTS whose elements
+    # already contain the leading "-o" flag, as scp uses a different option syntax.
+    SCP_OPTS=(
+        -o BatchMode=yes
+        -o ConnectTimeout=10
+        -o StrictHostKeyChecking=accept-new
+        -o "UserKnownHostsFile=$PABS_KNOWN_HOSTS"
+    )
+    [[ -n "$SSH_KEY"  ]] && SCP_OPTS+=(-i "$SSH_KEY")
+    [[ -n "$SSH_PORT" ]] && SCP_OPTS+=(-P "$SSH_PORT")   # scp uses -P (capital), not -p
     COPY_OUTPUT="$(
         scp -q -r "${SCP_OPTS[@]}" "$AGENT_SOURCE/." "$TARGET:$REMOTE_DIR/" 2>&1
     )"
