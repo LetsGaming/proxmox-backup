@@ -38,7 +38,7 @@ backup_cmd_output() {
     local dest="$STAGE_DIR/$dest_relative"
     mkdir -p "$(dirname "$dest")"
 
-    if "$@" 9>&- > "$dest" 2>>"$LOG"; then
+    if "$@" > "$dest" 2>>"$LOG"; then
         log "  ✓ $label"
     else
         log_warn "$label — command failed or partially failed"
@@ -195,7 +195,7 @@ section_system_state() {
         backup_cmd_output "$s/lvm-pvs.txt" "LVM physical volumes" pvs --units b --nosuffix
         backup_cmd_output "$s/lvm-vgs.txt" "LVM volume groups"    vgs --units b --nosuffix
         backup_cmd_output "$s/lvm-lvs.txt" "LVM logical volumes"  lvs --units b --nosuffix
-        vgcfgbackup -f "$STAGE_DIR/$s/lvm-vg-%s.cfg" 9>&- 2>>"$LOG" \
+        vgcfgbackup -f "$STAGE_DIR/$s/lvm-vg-%s.cfg" 2>>"$LOG" \
             && log "  ✓ LVM VG configs (restorable with vgcfgrestore)" \
             || log_warn "LVM vgcfgbackup failed (non-fatal)"
     fi
@@ -228,7 +228,8 @@ section_custom_scripts() {
             -e 's|\(PORTAINER_TOKEN=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
             -e 's|\(RCLONE_ENCRYPTION_PASSWORD=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
             -e 's|\(RCLONE_ENCRYPTION_SALT=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
-            -e '/[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]\\|[Ss][Ee][Cc][Rr][Ee][Tt]\\|_TOKEN\\|_KEY\\|WEBHOOK/s|="\\([^"]\\{4,\\}\\)"|="<REDACTED>"|g' \
+            -e '/[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]\|[Ss][Ee][Cc][Rr][Ee][Tt]\|_TOKEN\|_KEY\|WEBHOOK/ \
+                s|="\([^"]\{4,\}\)"|="<REDACTED>"|g' \
             "$config_src" > "$config_dest"
         chmod 600 "$config_dest"
         log "  ✓ config.sh (secrets redacted)"
@@ -362,5 +363,6 @@ section_vm_agents() {
     done
 
     log "  VM agents: $total_ok OK, $total_fail failed, $total_skip skipped"
-    [[ $total_fail -gt 0 ]] && log_err "$total_fail VM agent(s) failed"
+    if [[ $total_fail -gt 0 ]]; then log_err "$total_fail VM agent(s) failed"; fi
+    return 0
 }

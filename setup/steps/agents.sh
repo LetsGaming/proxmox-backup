@@ -73,14 +73,10 @@ _agent_type_minecraft() {
     local sys_user
     sys_user=$(_ask "Linux username running Minecraft" "minecraft")
     local base_default="/home/${sys_user}/minecraft-server/backups"
-    local server_default="/home/${sys_user}/minecraft-server"
 
-    local base server weekly daily
+    local base weekly daily
     base=$(_ask "Backup archives directory (MINECRAFT_BASE)" "$base_default")
     [[ "$base" != "$base_default" ]] && _flags+=(--set "MINECRAFT_BASE=$base")
-
-    server=$(_ask "Server root directory (MINECRAFT_SERVER_BASE)" "$server_default")
-    [[ "$server" != "$server_default" ]] && _flags+=(--set "MINECRAFT_SERVER_BASE=$server")
 
     weekly=$(_ask "Weekly archives to keep per instance" "4")
     [[ "$weekly" != "4" ]] && _flags+=(--set "MC_KEEP_WEEKLY=$weekly")

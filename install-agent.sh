@@ -19,9 +19,12 @@ SSH_OPTS=(
 )
 
 declare -a SET_VARS=()
+LABEL=""
 
 usage() {
-    echo "Usage: $0 <user@host> [--dir /remote/path] [--key /path/to/key] [--set KEY=VALUE ...]"
+    echo "Usage: $0 <user@host> [--label NAME] [--dir /remote/path] [--key /path/to/key] [--set KEY=VALUE ...]"
+    echo "  --label NAME   Short identifier used as the VM_AGENTS entry label and backup folder name."
+    echo "                 Defaults to an auto-derived name from the hostname."
     exit 1
 }
 
@@ -36,6 +39,10 @@ shift
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --label)
+            LABEL="$2"
+            shift 2
+            ;;
         --dir)
             REMOTE_DIR="$2"
             shift 2
@@ -68,6 +75,10 @@ if [[ -n "$SSH_KEY" ]]; then
 
     SSH_OPTS+=(-i "$SSH_KEY")
 fi
+
+# Derive host and user parts early — used throughout the rest of the script
+HOST_PART="${TARGET##*@}"
+SSH_USER="${TARGET%%@*}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -223,8 +234,6 @@ fi
 
 log "Registering host key in $PABS_KNOWN_HOSTS ..."
 
-HOST_PART="${TARGET##*@}"
-
 mkdir -p "$(dirname "$PABS_KNOWN_HOSTS")"
 
 touch "$PABS_KNOWN_HOSTS"
@@ -249,52 +258,53 @@ DETECTED_TYPE="$(
 
 log "Detected type: $DETECTED_TYPE"
 
-# --- Auto-register VM in config.sh ---
+# ---------------------------------------------------------------------------
+# Register VM in config.sh
+# ---------------------------------------------------------------------------
+
 CONFIG_FILE="$SCRIPT_DIR/config.sh"
 
-HOST_PART="${TARGET##*@}"
-LABEL="${HOST_PART//./-}"
-VM_ENTRY="    \"$LABEL  $HOST_PART  ${TARGET%%@*}  $REMOTE_DIR/agent.sh\""
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    log "ERROR: config.sh not found at $CONFIG_FILE"
+    log "Run the setup wizard first: bash $SCRIPT_DIR/setup.sh"
+    exit 1
+fi
+
+# Derive label: use --label if provided, otherwise sanitise the hostname part
+# of TARGET (strip user@, replace dots and underscores with dashes, lowercase)
+if [[ -z "$LABEL" ]]; then
+    LABEL="$(echo "$HOST_PART" | sed 's/:[0-9]*$//' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/^-*//; s/-*$//')"
+fi
 
 log ""
 log "Registering VM agent in config.sh ..."
+log "  Label:  $LABEL"
+log "  Host:   $HOST_PART"
+log "  User:   $SSH_USER"
 
-if grep -Fq "\"$LABEL  $HOST_PART" "$CONFIG_FILE"; then
-    log "  ✓ VM already present in VM_AGENTS"
+# Source config_editor so we can use _cfg_append_vm_agent — the same function
+# the setup wizard uses. This keeps all config.sh write logic in one place.
+CONFIG="$CONFIG_FILE"
+# shellcheck source=setup/config_editor.sh
+source "$SCRIPT_DIR/setup/config_editor.sh"
+
+ENTRY="${LABEL}  ${HOST_PART}  ${SSH_USER}  ${REMOTE_DIR}/agent.sh"
+
+# Check for a duplicate entry before inserting
+if grep -Fq "\"${LABEL}  ${HOST_PART}" "$CONFIG_FILE" 2>/dev/null; then
+    log "  ✓ VM already present in VM_AGENTS — skipping"
 else
-    TMP_FILE="$(mktemp)"
-
-    in_vm_agents=0
-    inserted=0
-
-    while IFS= read -r line; do
-        echo "$line" >> "$TMP_FILE"
-
-        # Detect the REAL VM_AGENTS block
-        if [[ "$line" =~ ^VM_AGENTS=\($ ]]; then
-            in_vm_agents=1
-            continue
-        fi
-
-        # Insert BEFORE the closing ) of the real block
-        if [[ $in_vm_agents -eq 1 && "$line" == ")" ]]; then
-            sed -i "\|^)$|i\\$VM_ENTRY" "$TMP_FILE"
-            inserted=1
-            in_vm_agents=0
-        fi
-    done < "$CONFIG_FILE"
-
-    if [[ $inserted -eq 1 ]]; then
-        mv "$TMP_FILE" "$CONFIG_FILE"
-        log "  ✓ Added VM to VM_AGENTS"
-    else
-        rm -f "$TMP_FILE"
-        log "  ERROR: failed to locate VM_AGENTS block"
-        exit 1
-    fi
+    _cfg_append_vm_agent "$ENTRY"
+    log "  ✓ Added to VM_AGENTS: $ENTRY"
 fi
 
 log ""
 log "============================================================"
-log "VM registration complete"
+log "Agent deployed and registered"
+log "  Label:  $LABEL"
+log "  Host:   $HOST_PART"
+log "  Type:   $DETECTED_TYPE"
 log "============================================================"
+log ""
+log "VM_AGENTS entry written to config.sh."
+log "Run 'bash backup.sh --dry-run' to verify the agent is reachable."

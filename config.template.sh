@@ -1,6 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# PABS Configuration
+# PABS Configuration Template
+# Copy to config.sh before editing. config.sh is .gitignored — git pulls
+# never touch your settings.
 # Proxmox Automated Backup System — v3.3
 #
 # This is the ONLY file you need to edit for a standard setup.
@@ -225,12 +227,12 @@ RCLONE_ENCRYPTION_SALT=""
 # INTERNAL VARS — do not edit below this line
 # =============================================================================
 
-SCRIPT_VERSION="3.4"
-DATE=$(date +"%Y-%m-%d_%H-%M-%S")
+
+
 
 BACKUP_ROOT="$USB_MOUNT/proxmox-backup"
-STAGE_DIR="$LOCAL_STAGE_BASE/.tmp-$DATE"
-FINAL_DIR="$BACKUP_ROOT/$DATE"
+
+
 
 # Persistent log lives outside per-backup dirs so it survives rotation
 LOG="$BACKUP_ROOT/backup.log"
@@ -241,4 +243,4 @@ ERRORS=0
 
 # Immutable after sourcing — guard against accidental re-assignment in scripts
 # sourced later (custom scripts, type handlers).
-readonly SCRIPT_VERSION USB_MOUNT BACKUP_ROOT LOCAL_STAGE_BASE LOG LOCK_FILE
+readonly USB_MOUNT BACKUP_ROOT LOCAL_STAGE_BASE LOG LOCK_FILE

@@ -52,6 +52,14 @@ export DRY_RUN
 # Source config first — defines all variables consumed by the libs
 source "$PABS_DIR/config.sh"
 
+# Run-time vars — computed here so DATE is always the moment this run starts,
+# never the moment config.sh was last sourced.
+SCRIPT_VERSION="3.4"
+DATE=$(date +"%Y-%m-%d_%H-%M-%S")
+STAGE_DIR="$LOCAL_STAGE_BASE/.tmp-$DATE"
+FINAL_DIR="$BACKUP_ROOT/$DATE"
+readonly SCRIPT_VERSION DATE
+
 # Source libs in dependency order:
 #   core.sh sets up logging and the ERR/EXIT trap; everything after needs log()
 source "$PABS_DIR/lib/core.sh"

@@ -2,13 +2,14 @@
 # =============================================================================
 # setup/config_editor.sh — config.sh read / write helpers
 #
-# Sourced by setup.sh. All functions operate on the $CONFIG path exported
-# by setup.sh. Nothing here produces user-visible output — callers handle that.
+# Sourced by setup.sh and install-agent.sh. All functions operate on the
+# $CONFIG path exported by the caller.
+# Nothing here produces user-visible output — callers handle that.
 #
 # Functions:
-#   _cfg_get KEY              → print current value (empty if unset/commented)
-#   _cfg_set KEY VALUE        → set quoted string value
-#   _cfg_set_raw KEY VALUE    → set unquoted value (integers, booleans, arrays)
+#   _cfg_get KEY               → print current value (empty if unset/commented)
+#   _cfg_set KEY VALUE         → set quoted string value
+#   _cfg_set_raw KEY VALUE     → set unquoted value (integers, booleans, arrays)
 #   _cfg_append_vm_agent ENTRY → append one agent entry to VM_AGENTS array
 # =============================================================================
 
@@ -27,9 +28,15 @@ _cfg_get() {
 # ---------------------------------------------------------------------------
 # _cfg_set KEY VALUE
 # Sets KEY="VALUE" in $CONFIG.
-#   - Replaces an existing active assignment in-place
-#   - Uncomments the first commented occurrence if no active one exists
-#   - Appends before the INTERNAL VARS sentinel if the key is absent entirely
+#   - Replaces an existing active assignment in-place.
+#   - Uncomments a DIRECTLY commented-out assignment (^# KEY= or ^#KEY=).
+#     A "directly commented" line has at most one space between # and KEY.
+#     This intentionally does NOT touch documentation comments that merely
+#     mention the key name, such as:
+#       #   RCLONE_KEEP_MIN=1    ← indented example (2+ spaces after #)
+#       # e.g. RCLONE_KEEP_MIN  ← prose mention
+#     Only lines matching exactly ^#\s?KEY= are candidates.
+#   - Appends before the INTERNAL VARS sentinel if the key is absent entirely.
 # Never touches the INTERNAL VARS section.
 # ---------------------------------------------------------------------------
 _cfg_set() {
@@ -40,10 +47,18 @@ _cfg_set() {
     escaped=$(printf '%s' "$value" | sed 's/[\/&]/\\&/g')
 
     if grep -qE "^${key}=" "$CONFIG" 2>/dev/null; then
+        # Active assignment exists — replace value in-place
         sed -i -E "s|^(${key}=).*|\1\"${escaped}\"|" "$CONFIG"
-    elif grep -qE "^#.*${key}=" "$CONFIG" 2>/dev/null; then
-        sed -i -E "0,/^#.*${key}=.*/{s|^#.*${key}=.*|${key}=\"${escaped}\"|}" "$CONFIG"
+
+    elif grep -qE "^#[[:space:]]?${key}=" "$CONFIG" 2>/dev/null; then
+        # Directly commented-out assignment — uncomment and set value.
+        # Two-step: first strip the leading #(space), then normalise the value.
+        # The 0, addr ensures only the first match is touched.
+        sed -i -E "0,/^#[[:space:]]?${key}=/{s|^#[[:space:]]?(${key}=.*)|\1|}" "$CONFIG"
+        sed -i -E "s|^(${key}=).*|\1\"${escaped}\"|" "$CONFIG"
+
     else
+        # Key not present at all — insert before the INTERNAL VARS sentinel
         sed -i "/^# =*.*INTERNAL VARS/i ${key}=\"${escaped}\"" "$CONFIG"
     fi
 
@@ -53,7 +68,7 @@ _cfg_set() {
 # ---------------------------------------------------------------------------
 # _cfg_set_raw KEY VALUE
 # Like _cfg_set but writes the value without surrounding quotes.
-# Use for integers (KEEP_BACKUPS=4), booleans, and simple bare values.
+# Use for integers (KEEP_BACKUPS=4), booleans (BACKUP_ZFS=true), and arrays.
 # ---------------------------------------------------------------------------
 _cfg_set_raw() {
     local key="$1"
@@ -64,6 +79,11 @@ _cfg_set_raw() {
 
     if grep -qE "^${key}=" "$CONFIG" 2>/dev/null; then
         sed -i -E "s|^(${key}=).*|\1${escaped}|" "$CONFIG"
+
+    elif grep -qE "^#[[:space:]]?${key}=" "$CONFIG" 2>/dev/null; then
+        sed -i -E "0,/^#[[:space:]]?${key}=/{s|^#[[:space:]]?(${key}=.*)|\1|}" "$CONFIG"
+        sed -i -E "s|^(${key}=).*|\1${escaped}|" "$CONFIG"
+
     else
         sed -i "/^# =*.*INTERNAL VARS/i ${key}=${escaped}" "$CONFIG"
     fi

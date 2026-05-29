@@ -1,10 +1,3 @@
-# PABS — Proxmox Automated Backup System
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Proxmox%20VE-7.x%20–%209.x-e57000.svg)](https://www.proxmox.com/)
-[![Tests](https://img.shields.io/badge/Tests-BATS-brightgreen.svg)](tests/pabs.bats)
-[![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25.svg)](backup.sh)
-
 ```
   ██████╗  █████╗ ██████╗ ███████╗
   ██╔══██╗██╔══██╗██╔══██╗██╔════╝
@@ -14,6 +7,13 @@
   ╚═╝     ╚═╝  ╚═╝╚═════╝ ╚══════╝
   Proxmox Automated Backup System
 ```
+
+# PABS — Proxmox Automated Backup System
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Proxmox%20VE-7.x%20–%209.x-e57000.svg)](https://www.proxmox.com/)
+[![Tests](https://img.shields.io/badge/Tests-BATS-brightgreen.svg)](tests/pabs.bats)
+[![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25.svg)](backup.sh)
 
 Backs up a Proxmox node — configs, VM/CT definitions, SSH keys, firewall rules, package state, and per-VM application bundles — to a USB stick. Optionally syncs offsite with AES-256 encryption.
 
@@ -26,7 +26,7 @@ Backs up a Proxmox node — configs, VM/CT definitions, SSH keys, firewall rules
 **Requires:** Proxmox VE 7.x – 9.x · root access · a partitioned USB stick · internet access during setup only
 
 ```bash
-git clone https://github.com/LetsGaming/pabs.git /opt/pabs
+git clone https://github.com/your-org/pabs /opt/pabs
 chmod +x /opt/pabs/*.sh
 sudo bash /opt/pabs/setup.sh
 ```
@@ -37,6 +37,12 @@ After setup, restrict the config file:
 
 ```bash
 chmod 600 /opt/pabs/config.sh
+```
+
+**Updating PABS** (preserves your `config.sh` automatically):
+
+```bash
+sudo bash /opt/pabs/setup.sh --update
 ```
 
 ---
