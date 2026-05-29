@@ -218,6 +218,22 @@ _update_agent() {
     ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
         "chmod +x \"$agent_path\" && chmod 644 \"$remote_dir\"/types/*.sh" 2>/dev/null
 
+    # Ensure required tools are present — an update may introduce a new dep.
+    # Tries apt-get (Debian/Ubuntu), then apk (Alpine/HAOS), then warns.
+    for _dep in rsync zstd python3; do
+        ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "bash -s" << SSHEOF 2>/dev/null || true
+            command -v ${_dep} >/dev/null 2>&1 && exit 0
+            if command -v apt-get >/dev/null 2>&1; then
+                apt-get install -y ${_dep} >/dev/null 2>&1 && exit 0
+            fi
+            if command -v apk >/dev/null 2>&1; then
+                apk add --no-cache ${_dep} >/dev/null 2>&1 && exit 0
+            fi
+            echo "[update-agents]   ⚠  ${_dep} not found and could not be installed automatically on $vm_host"
+SSHEOF
+    done
+    unset _dep
+
     # Quick smoke-test: ask the agent to report its detected type
     local detected_type
     detected_type="$(

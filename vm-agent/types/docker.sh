@@ -314,7 +314,10 @@ _backup_volumes() {
             fi
         fi
         _backup_named_volume "$vol" "auto"
-    done < <(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -v '^[a-f0-9]\{64\}$')
+    done < <(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -v '^[a-f0-9]\{64\}$' || true)
+    # The grep filters out anonymous volumes (64-char hex hashes) — they're ephemeral.
+    # || true: grep exits 1 when no named volumes exist; under set -euo pipefail
+    # that would kill the agent. An empty result is a valid outcome.
     # The grep filters out anonymous volumes (64-char hex hashes) — they're ephemeral
 }
 

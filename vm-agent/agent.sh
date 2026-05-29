@@ -3,13 +3,25 @@
 # PABS VM Agent — runs INSIDE a VM or LXC, called by the Proxmox host over SSH
 #
 # Usage:
-#   agent.sh --bundle-output /tmp/pabs-bundle.tar.zst   # normal backup mode
-#   agent.sh --install                                   # first-time setup
-#   agent.sh --type                                      # print detected type and exit
+#   agent.sh --bundle-output /tmp/pabs-bundle   # backup mode — prints final path to stdout
+#   agent.sh --install                           # first-time setup
+#   agent.sh --type                              # print detected type and exit
 #
-# The agent auto-detects its VM/LXC type, collects only what's needed for a
-# restore, and writes a self-contained .tar.zst bundle to the requested path.
-# PABS on the Proxmox host rsync's that bundle back to USB staging.
+# OUTPUT PROTOCOL (backup mode):
+#   The agent writes its bundle to <output_path>.<ext> and prints the full
+#   resolved path to stdout on success. The caller (sections.sh on the
+#   Proxmox host) captures that line to know exactly what to rsync back.
+#
+#   Two bundle formats are supported:
+#     .tar.zst  — staging tree compressed with zstd (docker, generic, minecraft)
+#     .tar      — prebuilt file passed through as-is (haos — HA native snapshot)
+#
+#   Type handlers signal the prebuilt mode by setting AGENT_PREBUILT_FILE to
+#   the path of an already-complete file before returning from run_backup().
+#   When set, agent.sh bypasses tar+zstd entirely and moves that file directly
+#   to <output_path>.tar. This eliminates double-compression of HA snapshots
+#   (which are already compressed internally) and removes the zstd dependency
+#   from environments like the HAOS SSH add-on that don't have it.
 #
 # Type detection (first match wins, all overridable via /etc/pabs-agent/config):
 #   haos    — ha CLI present + /config/configuration.yaml exists
@@ -352,15 +364,51 @@ Date:     $(date '+%Y-%m-%d %H:%M:%S')
 Kernel:   $(uname -r)
 "
 
-    # Compress the staging tree into the requested output bundle
-    log "Compressing bundle..."
-    local bundle_tmp="${output_path}.tmp"
-    tar -C "$STAGE_DIR" -cf - . | zstd -q -T0 -o "$bundle_tmp"
-    mv "$bundle_tmp" "$output_path"
+    # Bundle output — two paths depending on whether the handler produced a
+    # prebuilt file or a staging directory that needs compression.
+    local final_path
+    if [[ -n "${AGENT_PREBUILT_FILE:-}" ]]; then
+        # Handler set AGENT_PREBUILT_FILE — it already produced a complete,
+        # self-contained backup file (e.g. the HAOS native .tar snapshot).
+        # Move it directly to the output path, preserving its extension.
+        [[ -f "$AGENT_PREBUILT_FILE" ]]             || die "AGENT_PREBUILT_FILE set but file not found: $AGENT_PREBUILT_FILE"
+        local ext="${AGENT_PREBUILT_FILE##*.}"
+        final_path="${output_path}.${ext}"
+        mv "$AGENT_PREBUILT_FILE" "$final_path"
+        log "Bundle ready (prebuilt ${ext}): $final_path"
+
+        # The staging dir still contains metadata (restore-notes.txt,
+        # agent-meta.txt). Compress it as a small sidecar so that information
+        # is preserved on the Proxmox side alongside the prebuilt file.
+        local meta_path="${output_path}.meta.tar.zst"
+        if command -v zstd &>/dev/null; then
+            local meta_tmp="${meta_path}.tmp"
+            tar -C "$STAGE_DIR" -cf - . | zstd -q -T0 -o "$meta_tmp"                 && mv "$meta_tmp" "$meta_path"                 || { log_warn "Meta sidecar compression failed — skipping (non-fatal)"; meta_path=""; }
+        else
+            # zstd not available (e.g. HAOS SSH add-on) — skip the sidecar.
+            # The prebuilt file is the backup; metadata is nice-to-have.
+            log_warn "zstd not available — skipping metadata sidecar (non-fatal)"
+            meta_path=""
+        fi
+    else
+        # Handler populated $STAGE_DIR — compress it with zstd.
+        final_path="${output_path}.tar.zst"
+        log "Compressing bundle..."
+        local bundle_tmp="${final_path}.tmp"
+        tar -C "$STAGE_DIR" -cf - . | zstd -q -T0 -o "$bundle_tmp"
+        mv "$bundle_tmp" "$final_path"
+        log "Bundle written: $final_path"
+        meta_path=""
+    fi
 
     local size_kb
-    size_kb=$(du -sk "$output_path" | cut -f1)
-    log "Bundle written: $output_path (${size_kb}KB)"
+    size_kb=$(du -sk "$final_path" | cut -f1)
+    log "Size: ${size_kb}KB"
+
+    # Emit paths to stdout — one per line, sections.sh pulls everything listed.
+    # The prebuilt file is always first; the meta sidecar is second (if present).
+    echo "$final_path"
+    [[ -n "${meta_path:-}" ]] && echo "$meta_path" || true
 }
 
 main "$@"

@@ -142,7 +142,12 @@ _check_dep() {
             apt-get install -y ${pkg} 2>&1 | sed 's/^/  /'
             exit \$?
         fi
-        echo '[install-agent] WARNING: ${tool} not found and no apt-get available.'
+        if command -v apk >/dev/null 2>&1; then
+            echo '[install-agent] Installing ${pkg} via apk...'
+            apk add --no-cache ${pkg} 2>&1 | sed 's/^/  /'
+            exit \$?
+        fi
+        echo '[install-agent] WARNING: ${tool} not found and no apt-get/apk available.'
         echo '[install-agent] Install ${tool} manually on the remote system, then re-run install-agent.sh.'
         exit 0
 SSHEOF

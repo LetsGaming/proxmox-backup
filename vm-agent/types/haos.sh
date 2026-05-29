@@ -13,8 +13,16 @@
 # HOW IT WORKS:
 #   1. Triggers: ha backup new --name "pabs-<date>"
 #   2. Polls until the backup appears in: ha backup list
-#   3. The backup file lives at /backup/<slug>.tar inside the add-on shell
-#   4. agent.sh copies it into the bundle; PABS pulls it back to USB
+#   3. Sets AGENT_PREBUILT_FILE to /backup/<slug>.tar
+#   4. agent.sh moves that file directly to the output path — no re-compression.
+#      The HA .tar is the backup. It is already internally compressed by HA.
+#      Double-wrapping it in tar+zstd would waste CPU, waste space, and require
+#      zstd to be installed in the HAOS SSH add-on environment (Alpine Linux).
+#
+# OUTPUT FORMAT:
+#   <slug>.tar  — the native HA backup, restorable directly in the HA UI or
+#                 via: ha backup restore <slug>
+#   (+ optional .meta.tar.zst sidecar with restore-notes.txt if zstd available)
 #
 # ALL DEFAULTS ARE OVERRIDABLE in /etc/pabs-agent/config:
 #
@@ -149,10 +157,14 @@ _wait_for_backup() {
 }
 
 # -----------------------------------------------------------------------------
-# PULL BACKUP FILE
+# REGISTER PREBUILT FILE
 # -----------------------------------------------------------------------------
 
-_pull_backup_file() {
+# Signal to agent.sh that the HA .tar is the complete backup output.
+# agent.sh will move it directly to the bundle output path — no re-compression.
+# The HA snapshot is already internally compressed; wrapping it in tar+zstd
+# would waste CPU, waste space, and require zstd in the HAOS SSH add-on shell.
+_register_prebuilt_file() {
     local slug="$1"
     local backup_file="$HAOS_BACKUP_DIR/${slug}.tar"
 
@@ -160,13 +172,13 @@ _pull_backup_file() {
 
     local size_mb
     size_mb=$(du -sm "$backup_file" 2>/dev/null | cut -f1)
-    log "Pulling backup file: $backup_file (${size_mb}MB)"
+    log "Backup file ready: $backup_file (${size_mb}MB)"
+    log "  Passing to agent as prebuilt output — no re-compression"
 
-    # Copy into staging as haos-backup/<slug>.tar
-    mkdir -p "$STAGE_DIR/haos-backup"
-    cp "$backup_file" "$STAGE_DIR/haos-backup/${slug}.tar"
+    # agent.sh checks this variable after run_backup() returns.
+    # When set, it skips tar+zstd and moves this file directly to output_path.
+    AGENT_PREBUILT_FILE="$backup_file"
 
-    log "  ✓ Backup file staged (${size_mb}MB)"
     echo "${size_mb}"
 }
 
@@ -249,7 +261,8 @@ _write_restore_notes() {
         echo "========================================"
         echo ""
         echo "THE BACKUP FILE:"
-        echo "  haos-backup/${slug}.tar"
+        echo "  ${slug}.tar"
+        echo "  (the native HA snapshot — restore directly via HA UI or CLI)"
         echo ""
         echo "HOW TO RESTORE:"
         echo ""
@@ -257,11 +270,11 @@ _write_restore_notes() {
         echo "    1. Fresh HAOS install on new hardware"
         echo "    2. Wait for onboarding to appear"
         echo "    3. Click "Restore from backup" on the onboarding screen"
-        echo "    4. Upload haos-backup/${slug}.tar"
+        echo "    4. Upload ${slug}.tar"
         echo "    5. Select what to restore and confirm"
         echo ""
         echo "  OPTION B — CLI:"
-        echo "    1. Copy ${slug}.tar into the HA /backup/ directory"
+        echo "    1. Copy ${slug}.tar into the HA host /backup/ directory"
         echo "    2. SSH into the add-on shell"
         echo "    3. $restore_cmd"
         echo ""
@@ -294,9 +307,9 @@ run_backup() {
     # Wait for it to finish
     _wait_for_backup "$slug"
 
-    # Pull the file into staging
+    # Register the HA .tar as the prebuilt output — agent.sh moves it directly.
     local size_mb
-    size_mb=$(_pull_backup_file "$slug")
+    size_mb=$(_register_prebuilt_file "$slug")
 
     # Write restore instructions
     _write_restore_notes "$slug" "$size_mb"
@@ -304,5 +317,5 @@ run_backup() {
     # Clean up old pabs-* backups from the HA host
     _prune_old_host_backups
 
-    log "HAOS backup complete — slug: $slug (${size_mb}MB)"
+    log "HAOS backup complete — slug: $slug (${size_mb}MB) — prebuilt .tar, no re-compression"
 }

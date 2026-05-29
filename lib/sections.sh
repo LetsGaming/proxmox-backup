@@ -274,32 +274,57 @@ section_vm_agents() {
             return 1
         fi
 
-        local remote_bundle="/tmp/pabs-bundle-${label}-${DATE}.tar.zst"
+        # The agent outputs the path(s) it wrote to stdout — one per line.
+        # stderr is the human-readable log, redirected to $LOG as before.
+        # We pass a path prefix (no extension); the agent appends the right ext.
+        local remote_prefix="/tmp/pabs-bundle-${label}-${DATE}"
         local local_dest="$STAGE_DIR/vm-agents/$label"
         mkdir -p "$local_dest"
 
         local agent_timeout="${VM_AGENT_TIMEOUT:-600}"
-        if ! timeout "$agent_timeout" ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
-                "bash '$agent_path' --bundle-output '$remote_bundle'" 2>>"$LOG"; then
+        local agent_stdout
+        agent_stdout=$(
+            timeout "$agent_timeout" ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
+                "bash '$agent_path' --bundle-output '$remote_prefix'" 2>>"$LOG"
+        ) || {
             local ssh_rc=$?
-            [[ $ssh_rc -eq 124 ]] && log "  ✗  [$label] Agent timed out after ${agent_timeout}s on $vm_host" \
-                                  || log "  ✗  [$label] Agent failed on $vm_host"
-            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f \"$remote_bundle\"" 2>/dev/null || true
+            [[ $ssh_rc -eq 124 ]]                 && log "  ✗  [$label] Agent timed out after ${agent_timeout}s on $vm_host"                 || log "  ✗  [$label] Agent failed on $vm_host"
+            # Best-effort cleanup of any partial files matching the prefix
+            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
+                "rm -f '${remote_prefix}'.*" 2>/dev/null || true
+            return 1
+        }
+
+        # Parse the output — each non-empty line is a file to pull
+        local -a remote_files=()
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && remote_files+=("$line")
+        done <<< "$agent_stdout"
+
+        if [[ ${#remote_files[@]} -eq 0 ]]; then
+            log "  ✗  [$label] Agent produced no output paths"
             return 1
         fi
 
-        if ! rsync -a -e "ssh ${ssh_opts[*]@Q}" \
-                "$ssh_user@$vm_host:$remote_bundle" "$local_dest/" 2>>"$LOG"; then
-            log "  ✗  [$label] rsync of bundle failed"
-            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f \"$remote_bundle\"" 2>/dev/null || true
-            return 1
-        fi
+        # Pull every file the agent listed
+        local pull_ok=true
+        for remote_file in "${remote_files[@]}"; do
+            if ! rsync -a -e "ssh ${ssh_opts[*]@Q}" \
+                    "$ssh_user@$vm_host:$remote_file" "$local_dest/" 2>>"$LOG"; then
+                log "  ✗  [$label] rsync failed for $(basename "$remote_file")"
+                pull_ok=false
+            fi
+        done
 
-        local size_kb
-        size_kb=$(du -sk "$local_dest/$(basename "$remote_bundle")" 2>/dev/null | cut -f1)
-        log "  ✓  [$label] bundle pulled (${size_kb}KB)"
+        # Always clean up remote files, even on partial failure
+        ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
+            "rm -f '${remote_prefix}'.*" 2>/dev/null || true
 
-        ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f \"$remote_bundle\"" 2>/dev/null || true
+        $pull_ok || return 1
+
+        local total_kb
+        total_kb=$(du -sk "$local_dest" 2>/dev/null | cut -f1)
+        log "  ✓  [$label] pulled ${#remote_files[@]} file(s) (${total_kb}KB total)"
 
         # Space check after pull
         local avail_kb
@@ -309,14 +334,22 @@ section_vm_agents() {
             return 3
         fi
 
-        # Prune old bundles for this VM
+        # Prune old bundles for this VM.
+        # Match any file format the agent may have produced (.tar.zst or .tar)
+        # but exclude .meta.tar.zst sidecars — they're small and pruned with
+        # their primary file by name prefix matching below.
         local keep="${VM_AGENT_KEEP_BUNDLES:-2}"
         local old_bundles=()
         mapfile -t old_bundles < <(
-            find "$local_dest" -maxdepth 1 -type f -name "*.tar.zst" \
+            find "$local_dest" -maxdepth 1 -type f \( -name "*.tar.zst" -o -name "*.tar" \) \
+                ! -name "*.meta.tar.zst" \
                 -printf '%T@ %p\n' | sort -n | awk '{print $2}' | head -n -"$keep"
         )
         for b in "${old_bundles[@]}"; do
+            # Also remove the companion .meta.tar.zst sidecar if present
+            local meta_b="${b%.tar}.meta.tar.zst"
+            [[ -f "$meta_b" ]] && rm -f "$meta_b" \
+                && log "    [$label] pruned sidecar: $(basename "$meta_b")"
             rm -f "$b"
             log "    [$label] pruned old bundle: $(basename "$b")"
         done
