@@ -23,6 +23,39 @@ Detection runs in the order above — first match wins. Override with `--set PAB
 
 > **Using the wizard?** Run `sudo bash /opt/pabs/setup.sh --step agents` — it handles SSH key generation, asks type-specific questions, and calls `install-agent.sh` for you. The steps below are for manual setup or adding agents outside the wizard.
 
+### Step 0 — Grant SSH access from the Proxmox host to the VM
+
+`install-agent.sh` connects to the VM over SSH. The Proxmox host must be able to authenticate before the script can run. Do this once per VM.
+
+**Generate a dedicated key** (recommended — keeps agent access separate from your default key):
+
+```bash
+ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519_pabs_agent -N ""
+```
+
+**Copy the public key to the VM:**
+
+```bash
+ssh-copy-id -i /root/.ssh/id_ed25519_pabs_agent.pub root@<vm-ip>
+```
+
+For LXCs without `ssh-copy-id`, copy it manually:
+
+```bash
+ssh root@<vm-ip> "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+cat /root/.ssh/id_ed25519_pabs_agent.pub | ssh root@<vm-ip> "tee -a ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+**Verify access works:**
+
+```bash
+ssh -i /root/.ssh/id_ed25519_pabs_agent root@<vm-ip> "echo OK"
+```
+
+Once this returns `OK`, proceed to Step 1.
+
+> If you skip the dedicated key and use your default key instead, `install-agent.sh` will still work — just omit the `--key` flag. The dedicated key is recommended so that rotating your default host key later does not silently break agent backups.
+
 ### Step 1 — Deploy the agent
 
 Run `install-agent.sh` from the Proxmox host once per VM. It copies the agent files, runs first-time setup on the VM, registers the SSH host key in `/root/.ssh/pabs_known_hosts`, and prints the `VM_AGENTS` line to add to `config.sh`.
@@ -238,9 +271,31 @@ The agent detects common services that store data outside `/etc/` and logs a hin
 
 ## SSH key management
 
+There are two distinct SSH keys involved in the agent setup. It helps to keep them separate in your head:
+
+| Key | Where it lives | What it does |
+| :-- | :------------- | :----------- |
+| **PABS private key** | Proxmox host — `/root/.ssh/id_ed25519_pabs_agent` | Used by PABS to authenticate *to* each VM during backup runs |
+| **VM host key** | VM — registered in `/root/.ssh/pabs_known_hosts` on the host | Used by PABS to verify *it is talking to the right VM* (MITM protection) |
+
+`install-agent.sh` handles the host key registration automatically. The public key deployment to the VM (Step 0 above) is a one-time manual step you do before running `install-agent.sh`.
+
+### Adding the public key to a VM
+
+```bash
+# Using ssh-copy-id (requires password auth to be enabled on the VM)
+ssh-copy-id -i /root/.ssh/id_ed25519_pabs_agent.pub root@<vm-ip>
+
+# Without ssh-copy-id (works on any VM with SSH access)
+cat /root/.ssh/id_ed25519_pabs_agent.pub | ssh root@<vm-ip> \
+    "mkdir -p ~/.ssh && chmod 700 ~/.ssh && tee -a ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+### Host key registration
+
 `install-agent.sh` registers each VM's SSH host key in `/root/.ssh/pabs_known_hosts` automatically. This file is used by `VM_AGENT_SSH_OPTS` with `StrictHostKeyChecking=yes`, protecting against MITM attacks on the backup channel.
 
-If a VM's host key changes (e.g. after an OS reinstall), re-run `install-agent.sh`:
+If a VM's host key changes (e.g. after an OS reinstall), re-run `install-agent.sh` to update the registered key:
 
 ```bash
 ./install-agent.sh root@<vm-ip>

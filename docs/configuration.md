@@ -128,14 +128,25 @@ VM_AGENTS=()   # skip all VM agent backups
 
 **Type:** path | **Default:** `""` (use host default key)
 
-Shared SSH private key for all VM agent connections. A dedicated key is recommended so rotating the host's default key does not break agent backups:
+Shared SSH private key for all VM agent connections. A dedicated key is recommended so rotating the host's default key does not break agent backups.
+
+Before setting this, the corresponding public key must be deployed to every VM that PABS will back up. PABS cannot do this for you — it needs SSH access to deploy itself in the first place.
 
 ```bash
+# 1. Generate the key on the Proxmox host
 ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519_pabs_agent -N ""
+
+# 2. Copy the public key to each VM (repeat for every VM)
 ssh-copy-id -i /root/.ssh/id_ed25519_pabs_agent.pub root@<vm-ip>
 
+# 3. Verify access
+ssh -i /root/.ssh/id_ed25519_pabs_agent root@<vm-ip> "echo OK"
+
+# 4. Set in config.sh
 VM_SSH_KEY="/root/.ssh/id_ed25519_pabs_agent"
 ```
+
+If you skip the dedicated key, PABS uses the host's default key (`~/.ssh/id_*`). This works but is not recommended for long-term use.
 
 ### Per-VM SSH key override
 

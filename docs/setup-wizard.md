@@ -62,7 +62,13 @@ Both are optional and `n`-by-default.
 
 Handles SSH key setup and VM deployment:
 
-**1. SSH key** — checks for an existing dedicated key at `/root/.ssh/id_ed25519_pabs_agent`, offers to reuse or generate a new one.
+**1. SSH key** — checks for an existing dedicated key at `/root/.ssh/id_ed25519_pabs_agent`, offers to reuse or generate a new one. The wizard generates the key but cannot deploy it to your VMs — you must copy the public key to each VM before the wizard runs `install-agent.sh`:
+
+```bash
+ssh-copy-id -i /root/.ssh/id_ed25519_pabs_agent.pub root@<vm-ip>
+```
+
+The wizard will prompt you to do this and pause before proceeding.
 
 **2. Per-VM loop** — for each VM, asks for IP, SSH user, and label, then presents a type selector:
 
