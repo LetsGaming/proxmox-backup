@@ -131,9 +131,9 @@ _wait_for_backup() {
 
         local found
         # grep for the slug in the JSON — no python3 needed
-        found=$(echo "$list_json" | grep -o ""slug":"${slug}"" | head -1)
+        found=$(echo "$list_json" | grep -o '"slug":"'"${slug}"'"' | head -1)
 
-        if [[ "$found" == "found" ]]; then
+        if [[ -n "$found" ]]; then
             log "  ✓ Backup '$slug' ready"
             return 0
         fi

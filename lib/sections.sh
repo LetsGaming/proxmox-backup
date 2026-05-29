@@ -192,10 +192,10 @@ section_system_state() {
     # LVM — export human-readable summaries and a machine-readable vgcfgbackup
     # that can be restored with: vgcfgrestore -f lvm-vg-<name>.cfg <vg-name>
     if command -v vgs &>/dev/null && vgs &>/dev/null; then
-        backup_cmd_output "$s/lvm-pvs.txt" "LVM physical volumes" pvs --units b --nosuffix
-        backup_cmd_output "$s/lvm-vgs.txt" "LVM volume groups"    vgs --units b --nosuffix
-        backup_cmd_output "$s/lvm-lvs.txt" "LVM logical volumes"  lvs --units b --nosuffix
-        vgcfgbackup -f "$STAGE_DIR/$s/lvm-vg-%s.cfg" 2>>"$LOG" \
+        backup_cmd_output "$s/lvm-pvs.txt" "LVM physical volumes" bash -c 'exec 9>&-; pvs --units b --nosuffix'
+        backup_cmd_output "$s/lvm-vgs.txt" "LVM volume groups"    bash -c 'exec 9>&-; vgs --units b --nosuffix'
+        backup_cmd_output "$s/lvm-lvs.txt" "LVM logical volumes"  bash -c 'exec 9>&-; lvs --units b --nosuffix'
+        ( exec 9>&-; vgcfgbackup -f "$STAGE_DIR/$s/lvm-vg-%s.cfg" ) 2>>"$LOG" \
             && log "  ✓ LVM VG configs (restorable with vgcfgrestore)" \
             || log_warn "LVM vgcfgbackup failed (non-fatal)"
     fi
@@ -278,9 +278,12 @@ section_vm_agents() {
         local local_dest="$STAGE_DIR/vm-agents/$label"
         mkdir -p "$local_dest"
 
-        if ! ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
+        local agent_timeout="${VM_AGENT_TIMEOUT:-600}"
+        if ! timeout "$agent_timeout" ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
                 "bash '$agent_path' --bundle-output '$remote_bundle'" 2>>"$LOG"; then
-            log "  ✗  [$label] Agent failed on $vm_host"
+            local ssh_rc=$?
+            [[ $ssh_rc -eq 124 ]] && log "  ✗  [$label] Agent timed out after ${agent_timeout}s on $vm_host" \
+                                  || log "  ✗  [$label] Agent failed on $vm_host"
             ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f \"$remote_bundle\"" 2>/dev/null || true
             return 1
         fi

@@ -108,6 +108,11 @@ VM_AGENT_KEEP_BUNDLES=2
 # Log lines from parallel workers are written sequentially via the shared log.
 VM_AGENT_MAX_PARALLEL=1
 
+# Timeout (seconds) for each agent's remote execution. If an agent hangs —
+# e.g. a docker command stalls — PABS will kill the SSH session after this
+# many seconds and mark the agent as failed. Default: 600 (10 minutes).
+VM_AGENT_TIMEOUT=600
+
 # Minimum free space (KB) required on local stage after each agent bundle pull.
 # If breached the agent section aborts immediately. Default: 512 MB.
 VM_AGENT_STAGE_MIN_FREE_KB=524288
@@ -115,6 +120,8 @@ VM_AGENT_STAGE_MIN_FREE_KB=524288
 # SSH options applied to every VM agent connection.
 # StrictHostKeyChecking=yes requires host keys to be registered via install-agent.sh.
 VM_AGENT_SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 \
+                   -o ServerAliveInterval=30 \
+                   -o ServerAliveCountMax=5 \
                    -o StrictHostKeyChecking=yes \
                    -o UserKnownHostsFile=/root/.ssh/pabs_known_hosts)
 
