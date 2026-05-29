@@ -279,7 +279,7 @@ section_vm_agents() {
         mkdir -p "$local_dest"
 
         if ! ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
-                "$agent_path" "--bundle-output" "$remote_bundle" 2>>"$LOG"; then
+                "bash '$agent_path' --bundle-output '$remote_bundle'" 2>>"$LOG"; then
             log "  ✗  [$label] Agent failed on $vm_host"
             ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f \"$remote_bundle\"" 2>/dev/null || true
             return 1

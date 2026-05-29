@@ -182,24 +182,33 @@ _prune_old_host_backups() {
     local list_json
     list_json=$(_ha backup list 2>/dev/null) || return
 
-    # Collect pabs-* backup slugs sorted by date (oldest first)
-    local old_slugs
-    # Extract slugs of pabs-* backups oldest-first, no python3 needed.
-    # JSON backup objects have "slug" before "name" in HA's output.
-    old_slugs=$(echo "$list_json" \
+    # Collect pabs-* backup slugs sorted oldest-first, no python3 needed.
+    # Extract "slug":"X","name":"Y" pairs, filter by backup name prefix,
+    # then drop the newest HAOS_KEEP_ON_HOST entries (keep them, delete the rest).
+    local all_slugs keep_count old_slugs total
+    keep_count="${HAOS_KEEP_ON_HOST:-1}"
+    all_slugs=$(echo "$list_json" \
         | grep -o '"slug":"[^"]*","name":"[^"]*"' \
-        | grep ""name":"${HAOS_BACKUP_NAME}" \
+        | grep '"name":"'${HAOS_BACKUP_NAME} \
         | grep -o '"slug":"[^"]*"' \
-        | tr -d '"slug:' \
-        | head -n -"${HAOS_KEEP_ON_HOST:-1}") || true
+        | sed 's/"slug":"//;s/"//g') || true
 
-    if [[ -z "$old_slugs" ]]; then
+    if [ -z "$all_slugs" ]; then
         log "  Nothing to prune"
         return
     fi
 
+    total=$(echo "$all_slugs" | wc -l | tr -d ' ')
+    if [ "$total" -le "$keep_count" ]; then
+        log "  Nothing to prune ($total backup(s), keeping $keep_count)"
+        return
+    fi
+
+    # Drop the last $keep_count lines (newest), delete the rest
+    old_slugs=$(echo "$all_slugs" | head -n "$(( total - keep_count ))")
+
     while IFS= read -r slug; do
-        [[ -z "$slug" || "$slug" == \#* ]] && continue
+        [ -z "$slug" ] && continue
         log "  Removing old backup: $slug"
         _ha backup remove "$slug" >/dev/null 2>&1 \
             && log "  ✓ Removed $slug" \
@@ -214,51 +223,58 @@ _prune_old_host_backups() {
 _write_restore_notes() {
     local slug="$1"
     local size_mb="$2"
+    local haos_version
+    haos_version=$(ha core info --raw-json 2>/dev/null | grep -o '"version":"[^"]*"' | grep -o '"[^"]*"$' | tr -d '"' || echo "unknown")
 
-    cat > "$STAGE_DIR/restore-notes.txt" << EOF
-PABS Home Assistant OS Restore Notes
-Generated: $(date '+%Y-%m-%d %H:%M:%S')  Host: $(hostname)
-Backup slug: $slug
-Backup size: ${size_mb}MB
-Backup type: $HAOS_BACKUP_TYPE
-Encrypted:   $([ -n "$HAOS_BACKUP_PASSWORD" ] && echo "YES (password required)" || echo "no")
-========================================
+    local encrypted_str partial_note type_note restore_cmd body_line
+    encrypted_str=$([ -n "$HAOS_BACKUP_PASSWORD" ] && echo "YES (password required)" || echo "no")
+    restore_cmd="ha backup restore ${slug}"
+    [ -n "$HAOS_BACKUP_PASSWORD" ] && restore_cmd="$restore_cmd --password <your-password>"
+    body_line=""
+    [ -n "$HAOS_BACKUP_PASSWORD" ] && body_line='    Body: {"password": "<your-password>"}'
+    partial_note=""
+    if [ "$HAOS_BACKUP_TYPE" = "partial" ]; then
+        partial_note="  - This is a PARTIAL backup (addons: $HAOS_PARTIAL_ADDONS / folders: $HAOS_PARTIAL_FOLDERS)"
+    fi
+    type_note=""
+    [ "$HAOS_BACKUP_TYPE" = "full" ] && type_note="  - Full backup includes: HA config, add-ons, SSL, share, media, local add-ons"
 
-THE BACKUP FILE:
-  haos-backup/${slug}.tar
-
-  This is a native HAOS snapshot — the standard format supported by
-  Home Assistant. It contains the full HA configuration, add-ons,
-  and (for a full backup) all HA data.
-
-HOW TO RESTORE:
-
-  OPTION A — Web UI (easiest):
-    1. Fresh HAOS install on new hardware (proxmox-helper-scripts)
-    2. Wait for onboarding to appear
-    3. Click "Restore from backup" on the onboarding screen
-    4. Upload haos-backup/${slug}.tar
-    5. Select what to restore and confirm
-    6. HA will restore and reboot automatically
-
-  OPTION B — CLI (if HA is already running):
-    1. Copy ${slug}.tar into the HA /backup/ directory
-    2. SSH into the add-on shell
-    3. ha backup restore ${slug}$([ -n "$HAOS_BACKUP_PASSWORD" ] && echo " --password <your-password>")
-    4. Wait for restore + reboot
-
-  OPTION C — Supervisor API:
-    POST /api/backups/${slug}/restore/full
-    Header: Authorization: Bearer <long-lived-token>
-$([ -n "$HAOS_BACKUP_PASSWORD" ] && echo "    Body: {\"password\": \"<your-password>\"}")
-
-NOTES:
-$([ "$HAOS_BACKUP_TYPE" == "partial" ] && echo "  - This is a PARTIAL backup (addons: $HAOS_PARTIAL_ADDONS / folders: $HAOS_PARTIAL_FOLDERS)")
-$([ "$HAOS_BACKUP_TYPE" == "full" ] && echo "  - Full backup includes: HA config, add-ons, SSL, share, media, local add-ons")
-  - The snapshot was created with: ha backup new --name pabs-auto-... (native HAOS command)
-  - HAOS version at backup time: $(ha core info --raw-json 2>/dev/null | grep -o '"version":"[^"]*"' | grep -o '"[^"]*"$' | tr -d '"' || echo "unknown")
-
-EOF
+    {
+        echo "PABS Home Assistant OS Restore Notes"
+        echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')  Host: $(hostname)"
+        echo "Backup slug: $slug"
+        echo "Backup size: ${size_mb}MB"
+        echo "Backup type: $HAOS_BACKUP_TYPE"
+        echo "Encrypted:   $encrypted_str"
+        echo "========================================"
+        echo ""
+        echo "THE BACKUP FILE:"
+        echo "  haos-backup/${slug}.tar"
+        echo ""
+        echo "HOW TO RESTORE:"
+        echo ""
+        echo "  OPTION A — Web UI (easiest):"
+        echo "    1. Fresh HAOS install on new hardware"
+        echo "    2. Wait for onboarding to appear"
+        echo "    3. Click "Restore from backup" on the onboarding screen"
+        echo "    4. Upload haos-backup/${slug}.tar"
+        echo "    5. Select what to restore and confirm"
+        echo ""
+        echo "  OPTION B — CLI:"
+        echo "    1. Copy ${slug}.tar into the HA /backup/ directory"
+        echo "    2. SSH into the add-on shell"
+        echo "    3. $restore_cmd"
+        echo ""
+        echo "  OPTION C — Supervisor API:"
+        echo "    POST /api/backups/${slug}/restore/full"
+        echo "    Header: Authorization: Bearer <long-lived-token>"
+        [ -n "$body_line" ] && echo "$body_line"
+        echo ""
+        echo "NOTES:"
+        [ -n "$partial_note" ] && echo "$partial_note"
+        [ -n "$type_note" ] && echo "$type_note"
+        echo "  - HAOS version at backup time: $haos_version"
+    } > "$STAGE_DIR/restore-notes.txt"
     log "  ✓ restore-notes.txt written"
 }
 
