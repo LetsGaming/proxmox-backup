@@ -108,7 +108,9 @@ _stage_compose_set() {
     _compose_files+=("$compose_file")
 
     # .env alongside compose
-    [[ -f "$dir/.env" ]] && stage_path "$dir/.env" "  .env: $dir/.env"
+    if [[ -f "$dir/.env" ]]; then
+        stage_path "$dir/.env" "  .env: $dir/.env"
+    fi
 
     # docker-compose.override.yml / compose.override.yaml
     for override in \
@@ -116,7 +118,9 @@ _stage_compose_set() {
         "$dir/docker-compose.override.yaml" \
         "$dir/compose.override.yml" \
         "$dir/compose.override.yaml"; do
-        [[ -f "$override" ]] && stage_path "$override" "  override: $override"
+        if [[ -f "$override" ]]; then
+            stage_path "$override" "  override: $override"
+        fi
     done
 }
 
@@ -290,10 +294,10 @@ _backup_named_volume() {
 }
 
 _backup_volumes() {
-    [[ "$DOCKER_SKIP_VOLUMES" == "true" ]] && {
+    if [[ "$DOCKER_SKIP_VOLUMES" == "true" ]]; then
         _notes+=("Volume backup disabled (DOCKER_SKIP_VOLUMES=true)")
         return
-    }
+    fi
 
     # Force-include explicitly listed volumes
     if [[ -n "${DOCKER_INCLUDE_VOLUMES:-}" ]]; then

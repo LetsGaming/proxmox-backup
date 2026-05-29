@@ -412,7 +412,7 @@ Kernel:   $(uname -r)
     # Emit paths to stdout — one per line, sections.sh pulls everything listed.
     # The prebuilt file is always first; the meta sidecar is second (if present).
     echo "$final_path"
-    [[ -n "${meta_path:-}" ]] && echo "$meta_path" || true
+    if [[ -n "${meta_path:-}" ]]; then echo "$meta_path"; fi
 }
 
 main "$@"

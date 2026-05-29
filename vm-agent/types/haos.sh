@@ -187,7 +187,7 @@ _register_prebuilt_file() {
 # -----------------------------------------------------------------------------
 
 _prune_old_host_backups() {
-    [[ $HAOS_KEEP_ON_HOST -le 0 ]] && return
+    if [[ $HAOS_KEEP_ON_HOST -le 0 ]]; then return; fi
 
     log "Pruning old pabs-* backups on HA host (keeping $HAOS_KEEP_ON_HOST)..."
 

@@ -106,7 +106,7 @@ _backup_instance() {
     local weekly_dir="$instance_backup_dir/archives/weekly"
     if [[ -d "$weekly_dir" ]]; then
         while IFS= read -r archive; do
-            [[ -z "$archive" ]] && continue
+            if [[ -z "$archive" ]]; then continue; fi
             local fname size_mb
             fname=$(basename "$archive")
             size_mb=$(du -sm "$archive" 2>/dev/null | cut -f1)
@@ -130,7 +130,7 @@ _backup_instance() {
         local daily_dir="$instance_backup_dir/archives/daily"
         if [[ -d "$daily_dir" ]]; then
             while IFS= read -r archive; do
-                [[ -z "$archive" ]] && continue
+                if [[ -z "$archive" ]]; then continue; fi
                 local fname size_mb
                 fname=$(basename "$archive")
                 size_mb=$(du -sm "$archive" 2>/dev/null | cut -f1)
