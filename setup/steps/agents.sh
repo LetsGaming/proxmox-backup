@@ -46,6 +46,10 @@ _agent_type_haos() {
     _flags+=(--set "PABS_TYPE=haos")
     echo ""
     _info "HAOS backups use the native 'ha backup' command — restoreable directly from the HA UI."
+    _info "The agent runs inside the SSH & Web Terminal add-on, which listens on port 22222 by default."
+    local haos_port
+    haos_port=$(_ask "SSH port for the HAOS SSH add-on" "22222")
+    [[ "$haos_port" != "22" ]] && _flags+=(--port "$haos_port")
 
     local btype
     btype=$(_ask_choice "Backup type" "1" \
@@ -182,6 +186,13 @@ _agents_add_one() {
     agent_key=$(_cfg_get "VM_SSH_KEY")
     [[ -n "$agent_key" && -f "$agent_key" ]] && install_cmd+=(--key "$agent_key")
     install_cmd+=("${set_flags[@]}")
+    # Extract --port from set_flags for the retry hint (set by _agent_type_haos)
+    local vm_port=""
+    local _prev=""
+    for _f in "${set_flags[@]}"; do
+        [[ "$_prev" == "--port" ]] && vm_port="$_f"
+        _prev="$_f"
+    done
 
     echo ""
     _step "Deploying agent to ${vm_user}@${vm_host}..."
@@ -196,7 +207,9 @@ _agents_add_one() {
         _err "Agent deployment failed for ${vm_host}"
         _info "Possible causes: SSH not reachable, wrong user, key not copied to VM."
         _info "Retry later with:"
-        _dim "  bash install-agent.sh ${vm_user}@${vm_host}${set_flags[*]:+ ${set_flags[*]}}"
+        local _port_hint=""
+        [[ -n "$vm_port" ]] && _port_hint=" --port $vm_port"
+        _dim "  bash install-agent.sh ${vm_user}@${vm_host}${_port_hint}${set_flags[*]:+ ${set_flags[*]}}"
     fi
 }
 

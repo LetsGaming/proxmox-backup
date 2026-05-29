@@ -75,7 +75,7 @@ The wizard will prompt you to do this and pause before proceeding.
 | Choice | Type | Extra questions |
 | :----- | :--- | :-------------- |
 | 1 | Docker | Manager (`auto`/`dockge`/`portainer`), Dockge stacks dir, Portainer URL + token |
-| 2 | Home Assistant OS | Backup type (`full`/`partial`), HA snapshot encryption, retention count |
+| 2 | Home Assistant OS | SSH add-on port (default: 22222), backup type (`full`/`partial`), HA snapshot encryption, retention count |
 | 3 | Minecraft | System username, `MINECRAFT_BASE`, `MINECRAFT_SERVER_BASE`, weekly/daily retention |
 | 4 | Generic | Extra paths to include |
 | 5 | Auto-detect | No extra questions |

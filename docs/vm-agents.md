@@ -162,7 +162,56 @@ To update a setting after initial installation, re-run `install-agent.sh` with t
 
 ### Home Assistant OS (`types/haos.sh`)
 
-Must run inside the HAOS SSH add-on shell. Triggers a native HA snapshot via the `ha` CLI.
+The PABS agent runs inside the **SSH & Web Terminal add-on** shell. This is not the same as SSH access to the HAOS VM itself — HAOS does not expose a standard Linux SSH server. The add-on is required.
+
+#### Prerequisites — SSH add-on setup
+
+**1. Install the add-on:**
+
+In the HA UI: Settings → Add-ons → Add-on store → search **SSH & Web Terminal** → Install.
+
+Use the **"SSH & Web Terminal"** add-on by the Home Assistant team (not the legacy "SSH Server" add-on). It provides a proper shell with the `ha` CLI available.
+
+**2. Configure and start the add-on:**
+
+In the add-on configuration, set an authorised key **or** a password. Using a key is strongly recommended:
+
+```yaml
+authorized_keys:
+  - "ssh-ed25519 AAAA... root@proxmox"
+```
+
+Paste the contents of `/root/.ssh/id_ed25519_pabs_agent.pub` from your Proxmox host.
+
+Set `sftp: true` — required for `scp` to work (used by `install-agent.sh` as the fallback when `rsync` is not available).
+
+Start the add-on and enable **"Start on boot"**.
+
+**3. Note the SSH port:**
+
+The add-on listens on port **22222** by default (not 22). SSH into it from the Proxmox host to verify access:
+
+```bash
+ssh -i /root/.ssh/id_ed25519_pabs_agent -p 22222 root@<haos-ip> "ha --version"
+```
+
+If this returns a version string (e.g. `2024.11.0`), access is working.
+
+**4. Deploy the agent with the correct port:**
+
+```bash
+./install-agent.sh root@<haos-ip>     --key /root/.ssh/id_ed25519_pabs_agent     --port 22222     --set PABS_TYPE=haos
+```
+
+> The `--port` flag passes `-p 22222` to the SSH and scp calls inside `install-agent.sh`. Without it, the connection attempt goes to port 22 which is not listening on HAOS.
+
+The add-on shell is Alpine-based. `rsync` is not installed by default — `install-agent.sh` detects this and falls back to `scp` automatically.
+
+---
+
+**Variable reference:**
+
+Triggers a native HA snapshot via the `ha` CLI.
 
 | Variable | Default | Description |
 | :------- | :------ | :---------- |

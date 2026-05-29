@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_SOURCE="$SCRIPT_DIR/vm-agent"
 REMOTE_DIR="/opt/pabs-agent"
 SSH_KEY=""
+SSH_PORT=""
 PABS_KNOWN_HOSTS="/root/.ssh/pabs_known_hosts"
 
 SSH_OPTS=(
@@ -22,9 +23,10 @@ declare -a SET_VARS=()
 LABEL=""
 
 usage() {
-    echo "Usage: $0 <user@host> [--label NAME] [--dir /remote/path] [--key /path/to/key] [--set KEY=VALUE ...]"
+    echo "Usage: $0 <user@host> [--label NAME] [--dir /remote/path] [--key /path/to/key] [--port PORT] [--set KEY=VALUE ...]"
     echo "  --label NAME   Short identifier used as the VM_AGENTS entry label and backup folder name."
     echo "                 Defaults to an auto-derived name from the hostname."
+    echo "  --port PORT    SSH port on the remote host (default: 22). Use 22222 for HAOS SSH add-on."
     exit 1
 }
 
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
             SSH_KEY="$2"
             shift 2
             ;;
+        --port)
+            SSH_PORT="$2"
+            shift 2
+            ;;
         --set)
             [[ "$2" == *=* ]] || {
                 echo "--set requires KEY=VALUE format"
@@ -74,6 +80,10 @@ if [[ -n "$SSH_KEY" ]]; then
     }
 
     SSH_OPTS+=(-i "$SSH_KEY")
+fi
+
+if [[ -n "$SSH_PORT" ]]; then
+    SSH_OPTS+=(-p "$SSH_PORT")
 fi
 
 # Derive host and user parts early — used throughout the rest of the script
@@ -116,9 +126,29 @@ log ""
 
 log "Checking remote dependencies..."
 
-rrun "command -v rsync >/dev/null || apt-get install -y rsync >/dev/null 2>&1"
-rrun "command -v zstd >/dev/null || apt-get install -y zstd >/dev/null 2>&1"
-rrun "command -v python3 >/dev/null || apt-get install -y python3 >/dev/null 2>&1"
+# For each required tool: check if present, try apt-get install if missing,
+# warn (but do not abort) on systems without apt-get (e.g. HAOS, Alpine, Arch).
+_check_dep() {
+    local tool="$1"
+    local pkg="${2:-$1}"
+    rrun "
+        if command -v ${tool} >/dev/null 2>&1; then
+            exit 0
+        fi
+        if command -v apt-get >/dev/null 2>&1; then
+            echo '[install-agent] Installing ${pkg} via apt-get...'
+            apt-get install -y ${pkg} 2>&1 | sed 's/^/  /'
+            exit \$?
+        fi
+        echo '[install-agent] WARNING: ${tool} not found and no apt-get available.'
+        echo '[install-agent] Install ${tool} manually on the remote system, then re-run install-agent.sh.'
+        exit 0
+    "
+}
+
+_check_dep rsync
+_check_dep zstd
+_check_dep python3
 
 # ---------------------------------------------------------------------------
 # Copy agent files
@@ -128,26 +158,42 @@ log "Copying agent files to $TARGET:$REMOTE_DIR ..."
 
 rrun "mkdir -p $REMOTE_DIR/types"
 
+# Prefer rsync (faster, handles updates cleanly). Fall back to scp -r on systems
+# where rsync is not installed (e.g. HAOS SSH add-on, Alpine-based containers).
+REMOTE_HAS_RSYNC=false
+rrun "command -v rsync >/dev/null 2>&1" && REMOTE_HAS_RSYNC=true || true
+
 set +e
 
-RSYNC_OUTPUT="$(
-    rsync -a --delete \
-        -e "ssh ${SSH_OPTS[*]@Q}" \
-        "$AGENT_SOURCE/" \
-        "$TARGET:$REMOTE_DIR/" 2>&1
-)"
-RSYNC_RC=$?
+if $REMOTE_HAS_RSYNC; then
+    COPY_OUTPUT="$(
+        rsync -a --delete \
+            -e "ssh ${SSH_OPTS[*]@Q}" \
+            "$AGENT_SOURCE/" \
+            "$TARGET:$REMOTE_DIR/" 2>&1
+    )"
+    COPY_RC=$?
+else
+    log "rsync not available on remote — falling back to scp"
+    SCP_OPTS=()
+    for o in "${SSH_OPTS[@]}"; do SCP_OPTS+=(-o "${o#-o }"); done
+    [[ -n "$SSH_KEY" ]] && SCP_OPTS+=(-i "$SSH_KEY")
+    COPY_OUTPUT="$(
+        scp -q -r "${SCP_OPTS[@]}" "$AGENT_SOURCE/." "$TARGET:$REMOTE_DIR/" 2>&1
+    )"
+    COPY_RC=$?
+fi
 
 set -e
 
-if [[ $RSYNC_RC -ne 0 ]]; then
-    echo "$RSYNC_OUTPUT"
-    log "ERROR: rsync failed"
-    exit $RSYNC_RC
+if [[ $COPY_RC -ne 0 ]]; then
+    echo "$COPY_OUTPUT"
+    log "ERROR: agent file copy failed (tried $(${REMOTE_HAS_RSYNC} && echo rsync || echo scp))"
+    exit $COPY_RC
 fi
 
-rrun "chmod +x $REMOTE_DIR/agent.sh"
-rrun "chmod 644 $REMOTE_DIR/types/*.sh"
+rrun "chmod +x \"$REMOTE_DIR/agent.sh\""
+rrun "chmod 644 \"$REMOTE_DIR\"/types/*.sh"
 
 # ---------------------------------------------------------------------------
 # Run remote installer
@@ -243,7 +289,7 @@ chmod 600 "$PABS_KNOWN_HOSTS"
 
 ssh-keygen -R "$HOST_PART" -f "$PABS_KNOWN_HOSTS" 2>/dev/null || true
 
-ssh-keyscan -H "$HOST_PART" >> "$PABS_KNOWN_HOSTS" 2>/dev/null \
+ssh-keyscan -H ${SSH_PORT:+-p "$SSH_PORT"} "$HOST_PART" >> "$PABS_KNOWN_HOSTS" 2>/dev/null \
     && log "✓ Host key registered for $HOST_PART" \
     || log "⚠ ssh-keyscan failed"
 
