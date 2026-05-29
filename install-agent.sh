@@ -223,9 +223,10 @@ echo "$INSTALL_OUTPUT"
 
 if [[ $INSTALL_RC -ne 0 ]]; then
     if grep -q "Install complete" <<< "$INSTALL_OUTPUT"; then
-        log "WARNING: agent returned non-zero but install completed successfully"
+        : # agent exited non-zero but completed successfully (common on Alpine/HAOS
+          # where set -euo pipefail catches a sub-command in do_install)
     else
-        log "ERROR: remote install failed"
+        log "ERROR: remote install failed (exit $INSTALL_RC)"
         exit $INSTALL_RC
     fi
 fi
@@ -245,41 +246,23 @@ if [[ ${#SET_VARS[@]} -gt 0 ]]; then
 
         log "  $local_key=$local_val"
 
-        python3_script=$(cat << 'PYEOF'
-import sys
-import re
+        # Use sed to update the config on the remote — works on all targets
+        # including Alpine/HAOS where python3 is not installed.
+        # Escape characters that are special in sed's replacement string.
+        val_escaped="${local_val//\\/\\\\}"   # backslashes first
+        val_escaped="${val_escaped//|/\\|}"   # | is our sed delimiter
+        val_escaped="${val_escaped//&/\\&}"   # & means "matched text" in sed replacement
 
-config_path = sys.argv[1]
-key = sys.argv[2]
-value = sys.argv[3]
-
-with open(config_path, 'r') as f:
-    lines = f.readlines()
-
-pattern = re.compile(r'^\s*#?\s*' + re.escape(key) + r'\s*=')
-new_line = f'{key}="{value}"\n'
-
-replaced = False
-
-for i, line in enumerate(lines):
-    if pattern.match(line):
-        lines[i] = new_line
-        replaced = True
-        break
-
-if not replaced:
-    lines.append(f'\n# Set by install-agent.sh\n{new_line}')
-
-with open(config_path, 'w') as f:
-    f.writelines(lines)
-PYEOF
-)
-
-        local local_val_b64
-        local_val_b64=$(printf '%s' "$local_val" | base64)
-        rrun "python3 - '$AGENT_CONFIG' '$local_key' \"\$(printf '%s' $local_val_b64 | base64 -d)\"" << EOF
-$python3_script
-EOF
+        ssh "${SSH_OPTS[@]}" "$TARGET" "bash -s" << SSHEOF
+CONFIG="$AGENT_CONFIG"
+KEY="$local_key"
+NEW_LINE="${local_key}=\"${val_escaped}\""
+if grep -qE "^[[:space:]]*#?[[:space:]]*${local_key}[[:space:]]*=" "\$CONFIG" 2>/dev/null; then
+    sed -i "s|^[[:space:]]*#\?[[:space:]]*${local_key}[[:space:]]*=.*|\${NEW_LINE}|" "\$CONFIG"
+else
+    printf '\n# Set by install-agent.sh\n%s\n' "\${NEW_LINE}" >> "\$CONFIG"
+fi
+SSHEOF
     done
 
     log "✓ Config overrides applied"
