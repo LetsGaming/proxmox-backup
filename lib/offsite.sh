@@ -103,12 +103,16 @@ _offsite_prune() {
 
         if python3 -c "import sys; sys.exit(0 if float('$used_gb') > float('$max_gb') else 1)" 2>/dev/null; then
             log "  Offsite: storage cap exceeded — marking oldest for pruning"
+            # Track estimated remaining usage locally to avoid an rclone size RPC
+            # per iteration (slow and costly on paid remotes like Backblaze B2).
+            # We subtract a conservative 100MB per directory marked for deletion;
+            # the safety gate below ensures we never drop below KEEP_MIN.
+            local estimated_gb="$used_gb"
             for dir in "${remote_backups[@]}"; do
-                used_gb=$(_offsite_usage_gb "$remote_root")
-                python3 -c "import sys; sys.exit(0 if float('$used_gb') > float('$max_gb') else 1)" 2>/dev/null \
+                python3 -c "import sys; sys.exit(0 if float('$estimated_gb') > float('$max_gb') else 1)" 2>/dev/null \
                     || break
                 printf '%s\n' "${to_delete[@]+"${to_delete[@]}"}" | grep -qxF "$dir" \
-                    || to_delete+=("$dir")
+                    || { to_delete+=("$dir"); estimated_gb=$(python3 -c "print(round(float('$estimated_gb') - 0.1, 2))"); }
             done
         fi
     fi
@@ -159,6 +163,9 @@ offsite_sync() {
     log "  Encrypted: $encrypted"
 
     # shellcheck disable=SC2206
+    # Intentional word-split so multiple flags (e.g. "--transfers 4 --checkers 8") are
+    # passed as separate argv elements. Callers must not put glob characters in
+    # RCLONE_EXTRA_OPTS (e.g. --filter='*.bak') as they would undergo filename expansion.
     local -a extra_opts=($RCLONE_EXTRA_OPTS)
     local dest
     dest="${effective_remote%/}/$(basename "$FINAL_DIR")"

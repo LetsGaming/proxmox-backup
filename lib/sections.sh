@@ -283,14 +283,14 @@ section_vm_agents() {
         if ! ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
                 "$agent_path" "--bundle-output" "$remote_bundle" 2>>"$LOG"; then
             log "  ✗  [$label] Agent failed on $vm_host"
-            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f '$remote_bundle'" 2>/dev/null || true
+            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f \"$remote_bundle\"" 2>/dev/null || true
             return 1
         fi
 
         if ! rsync -a -e "ssh ${ssh_opts[*]@Q}" \
                 "$ssh_user@$vm_host:$remote_bundle" "$local_dest/" 2>>"$LOG"; then
             log "  ✗  [$label] rsync of bundle failed"
-            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f '$remote_bundle'" 2>/dev/null || true
+            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f \"$remote_bundle\"" 2>/dev/null || true
             return 1
         fi
 
@@ -298,7 +298,7 @@ section_vm_agents() {
         size_kb=$(du -sk "$local_dest/$(basename "$remote_bundle")" 2>/dev/null | cut -f1)
         log "  ✓  [$label] bundle pulled (${size_kb}KB)"
 
-        ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f '$remote_bundle'" 2>/dev/null || true
+        ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" "rm -f \"$remote_bundle\"" 2>/dev/null || true
 
         # Space check after pull
         local avail_kb

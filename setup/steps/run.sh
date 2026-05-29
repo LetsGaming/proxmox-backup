@@ -13,7 +13,7 @@ _print_config_summary() {
     email=$(_cfg_get "NOTIFY_EMAIL")
     rclone=$(_cfg_get "RCLONE_REMOTE")
     enc_pw=$(_cfg_get "RCLONE_ENCRYPTION_PASSWORD")
-    agent_lines=$(grep '".*\.sh"' "$CONFIG" 2>/dev/null | wc -l)
+    agent_lines=$(grep -c '".*\.sh"' "$CONFIG" 2>/dev/null || echo 0)
 
     printf "  %-25s %s\n" "USB_MOUNT"        "${usb_mount:-not set}"
     printf "  %-25s %s\n" "TARGET_UUID"      "${target_uuid:-not set (unsafe)}"

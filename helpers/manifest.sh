@@ -24,6 +24,9 @@ generate_and_verify_manifest() {
 
     local file_count
     file_count=$(wc -l < "$manifest")
+    if [[ "$file_count" -eq 0 ]]; then
+        die "Manifest is empty — all backup sections may have failed. Aborting."
+    fi
     log "  Manifest written ($file_count files). Verifying on local stage..."
 
     if ( cd "$STAGE_DIR" && sha256sum --quiet --check MANIFEST.sha256 2>>"$LOG" ); then
@@ -62,7 +65,7 @@ rotate_old_backups() {
     log "Rotating old backups (keeping last $KEEP_BACKUPS)..."
 
     mapfile -t old_backups < <(
-        find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name ".*" \
+        find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name ".*" ! -name "*.tmp" \
             | sort | head -n -"$KEEP_BACKUPS"
     )
 

@@ -140,7 +140,7 @@ _hint_common_services() {
         ["Jellyfin config"]="/etc/jellyfin"
     )
 
-    for service in "${!service_paths[@]}"; do
+    for service in $(echo "${!service_paths[@]}" | tr ' ' '\n' | sort); do
         local path="${service_paths[$service]}"
         if [[ -d "$path" ]]; then
             # Only hint if not already in /etc (already covered) or EXTRA_PATHS
@@ -179,7 +179,7 @@ $([ ${#_noted_paths[@]} -gt 0 ] && printf "  ✓ %s\n" "${_noted_paths[@]}")
 HOW TO RESTORE:
 
   1. Fresh VM or LXC (same base OS as backed up)
-     Detected OS: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '"')
+     Detected OS: $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')
 
   2. Restore packages (requires internet):
        dpkg --set-selections < system-state/dpkg-selections.txt

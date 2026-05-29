@@ -52,7 +52,7 @@ while [[ \$# -gt 0 ]]; do
 done
 
 log()     { echo "[\$(date '+%Y-%m-%d %H:%M:%S')] \$*"; }
-run()     { \$DRY_RUN && echo "  [DRY-RUN] \$*" || "\$@"; }
+run()     { if \$DRY_RUN; then echo "  [DRY-RUN] \$*"; else "\$@"; fi; }
 confirm() {
     [[ -n "\$ONLY_SECTION" ]] && return 0
     read -r -p "\$1 [y/N] " reply

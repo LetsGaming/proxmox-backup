@@ -116,7 +116,7 @@ check_usb_space() {
         # Try to recover space by purging the oldest completed backup —
         # but never if it's the last one (always keep at least one restore point).
         mapfile -t existing < <(
-            find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name ".*" | sort
+            find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name ".*" ! -name "*.tmp" | sort
         )
 
         if [[ ${#existing[@]} -gt 1 ]]; then

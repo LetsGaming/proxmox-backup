@@ -220,7 +220,9 @@ with open(config_path, 'w') as f:
 PYEOF
 )
 
-        rrun "python3 - '$AGENT_CONFIG' '$local_key' '$local_val'" << EOF
+        local local_val_b64
+        local_val_b64=$(printf '%s' "$local_val" | base64)
+        rrun "python3 - '$AGENT_CONFIG' '$local_key' \"\$(printf '%s' $local_val_b64 | base64 -d)\"" << EOF
 $python3_script
 EOF
     done

@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # PABS — Proxmox Automated Backup System
-# Version 3.3
+# Version 3.4
 #
 # Entry point. Sources config and library files, then runs the backup.
 # The only logic here is the top-level execution sequence.
@@ -92,7 +92,7 @@ check_usb_mounted
 
 mkdir -p "$BACKUP_ROOT" "$LOCAL_STAGE_BASE"
 
-$DRY_RUN && log "======== DRY-RUN MODE — no writes will occur ========"
+[[ "$DRY_RUN" == "true" ]] && log "======== DRY-RUN MODE — no writes will occur ========"
 acquire_lock
 
 log "========================================"
@@ -102,7 +102,7 @@ log "Host           : $(hostname)"
 log "USB mount      : $USB_MOUNT"
 log "Local stage    : $LOCAL_STAGE_BASE"
 log "VM agents      : ${#VM_AGENTS[@]} configured"
-$DRY_RUN && log "Mode           : DRY-RUN (no data written)"
+[[ "$DRY_RUN" == "true" ]] && log "Mode           : DRY-RUN (no data written)"
 log "========================================"
 
 check_local_stage_space
@@ -169,7 +169,13 @@ fi
 sync
 
 # Atomic rename — backup only becomes "visible" after all bytes are on flash
-mv "$FINAL_DIR.tmp" "$FINAL_DIR"
+mv "$FINAL_DIR.tmp" "$FINAL_DIR" || {
+    log "FATAL: atomic rename failed. Partial backup at $FINAL_DIR.tmp — remove manually."
+    rm -rf "$FINAL_DIR.tmp" "$STAGE_DIR"
+    dispatch_alert "FAILED: mv rename failed. Partial backup at $FINAL_DIR.tmp."
+    release_lock
+    exit 1
+}
 sync
 
 # Local staging freed — USB holds the only copy now
@@ -208,6 +214,7 @@ log "========================================"
 if [[ $ERRORS -gt 0 ]]; then
     log "⚠  Backup finished with $ERRORS error(s). Review the log."
     dispatch_alert "Backup $DATE finished with $ERRORS error(s). Review: $LOG"
+    trap - ERR EXIT
     exit 1
 fi
 

@@ -205,8 +205,8 @@ _usb_check_smart() {
     fi
 
     # Try SAT pass-through first (works on most USB-SATA bridges)
-    local smart_output smart_exit
-    smart_output=$(smartctl -H -d sat "$disk" 2>&1) && smart_exit=0 || smart_exit=$?
+    local smart_output
+    smart_output=$(smartctl -H -d sat "$disk" 2>&1) || true
 
     # smartctl exit codes are bitmask flags — bit 0 = command line error,
     # bit 1 = device open failed, bits 2-7 = drive status flags.

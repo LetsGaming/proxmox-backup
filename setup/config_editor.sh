@@ -22,7 +22,8 @@ _cfg_get() {
     local key="$1"
     grep -E "^${key}=" "$CONFIG" 2>/dev/null \
         | tail -1 \
-        | sed -E 's/^[^=]+=["'"'"']?([^"'"'"']*)["'"'"']?.*$/\1/'
+        | sed -E "s/^[^=]+=[\"']?([^\"'#]*)[\"']?.*$/\\1/" \
+        | sed 's/[[:space:]]*$//'
 }
 
 # ---------------------------------------------------------------------------
@@ -62,6 +63,8 @@ _cfg_set() {
         sed -i "/^# =*.*INTERNAL VARS/i ${key}=\"${escaped}\"" "$CONFIG"
     fi
 
+    # CHANGED is initialised and exported by setup.sh; in install-agent.sh context
+    # it is set but never read — harmless dead assignment there (SC2034).
     CHANGED=true
 }
 

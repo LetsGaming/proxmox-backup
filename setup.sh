@@ -35,7 +35,7 @@ TEMPLATE="$SCRIPT_DIR/config.template.sh"
 INSTALL_AGENT="$SCRIPT_DIR/install-agent.sh"
 BACKUP_SCRIPT="$SCRIPT_DIR/backup.sh"
 STATUS_SCRIPT="$SCRIPT_DIR/pabs-status.sh"
-export CONFIG TEMPLATE INSTALL_AGENT BACKUP_SCRIPT STATUS_SCRIPT
+export CONFIG INSTALL_AGENT BACKUP_SCRIPT STATUS_SCRIPT
 
 # ---------------------------------------------------------------------------
 # Self-update — plain git pull

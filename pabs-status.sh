@@ -68,7 +68,7 @@ if mountpoint -q "$USB_MOUNT" 2>/dev/null; then
 
     BACKUP_COUNT=0
     [[ -d "$BACKUP_ROOT" ]] && \
-        BACKUP_COUNT=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | wc -l)
+        BACKUP_COUNT=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' ! -name '*.tmp' | wc -l)
     _ok "$BACKUP_COUNT backup(s) in $BACKUP_ROOT"
 else
     _fail "USB not mounted at $USB_MOUNT"
@@ -87,7 +87,7 @@ echo "--- Most Recent Backup ---"
 
 LATEST=""
 if [[ "$USB_OK" == "true" && -d "$BACKUP_ROOT" ]]; then
-    LATEST=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' \
+    LATEST=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' ! -name '*.tmp' \
         | sort | tail -1)
 fi
 
@@ -136,6 +136,8 @@ if [[ ${#VM_AGENTS[@]} -eq 0 ]]; then
     _warn "No VM_AGENTS configured"
 else
     for entry in "${VM_AGENTS[@]}"; do
+        # agent_path is parsed but not used for the connectivity check (SC2034)
+        # shellcheck disable=SC2034
         read -r label vm_host ssh_user agent_path <<< "$entry"
         [[ -z "$label" ]] && continue
 

@@ -234,7 +234,7 @@ _backup_by_search() {
         [[ -d "$search_root" ]] || continue
         while IFS= read -r f; do
             _stage_compose_set "$f"
-            (( found++ )) || true
+            (( ++found )) || true  # pre-increment: always truthy when found >= 1; safe under set -e
         done < <(_find_compose_files "$search_root" "$DOCKER_SEARCH_DEPTH")
     done
 

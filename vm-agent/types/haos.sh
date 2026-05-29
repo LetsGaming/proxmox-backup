@@ -115,6 +115,12 @@ _wait_for_backup() {
 
     log "Waiting for backup '$slug' to appear (max ${HAOS_WAIT_SECONDS}s)..."
 
+    # Guard against HAOS_WAIT_SECONDS=0 which causes immediate timeout before
+    # the backup has any chance to complete.
+    if [[ "${HAOS_WAIT_SECONDS:-0}" -le 0 ]]; then
+        die "HAOS_WAIT_SECONDS must be greater than 0 (got: '${HAOS_WAIT_SECONDS:-0}'). Check config."
+    fi
+
     while true; do
         # ha backup list returns all backups; we look for our slug
         local list_json

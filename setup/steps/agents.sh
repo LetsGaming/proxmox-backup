@@ -41,6 +41,7 @@ _agent_type_docker() {
 }
 
 _agent_type_haos() {
+    # shellcheck disable=SC2178
     local -n _flags=$1
     _flags+=(--set "PABS_TYPE=haos")
     echo ""
@@ -64,6 +65,7 @@ _agent_type_haos() {
 }
 
 _agent_type_minecraft() {
+    # shellcheck disable=SC2178
     local -n _flags=$1
     _flags+=(--set "PABS_TYPE=minecraft")
     echo ""
@@ -86,6 +88,7 @@ _agent_type_minecraft() {
 }
 
 _agent_type_generic() {
+    # shellcheck disable=SC2178
     local -n _flags=$1
     _flags+=(--set "PABS_TYPE=generic")
     echo ""
@@ -212,7 +215,7 @@ _step_agents() {
 
     # Count only real (non-comment) agent entries
     local agent_count
-    agent_count=$(grep -E '^\s+"[a-zA-Z0-9]' "$CONFIG" 2>/dev/null | grep '\.sh"' | wc -l)
+    agent_count=$(grep -cE '^\s+"[a-zA-Z0-9].*\.sh"' "$CONFIG" 2>/dev/null || echo 0)
     if [[ "$agent_count" -gt 0 ]]; then
         echo ""
         _ok "$agent_count agent(s) already configured:"
@@ -237,7 +240,7 @@ _step_agents() {
 
     # Parallelism — only offer if there are multiple agents
     local final_count
-    final_count=$(grep -E '^\s+"[a-zA-Z0-9]' "$CONFIG" 2>/dev/null | grep '\.sh"' | wc -l)
+    final_count=$(grep -cE '^\s+"[a-zA-Z0-9].*\.sh"' "$CONFIG" 2>/dev/null || echo 0)
     if [[ "$final_count" -gt 1 ]]; then
         _step "Parallel agent backups"
         local current_parallel parallel
