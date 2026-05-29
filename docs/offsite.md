@@ -1,8 +1,8 @@
 # Offsite sync
 
-PABS implements the 3-2-1 backup rule: 3 copies, 2 different storage media (local SSD staging + USB stick), 1 offsite copy (cloud or remote server).
+PABS implements the 3-2-1 backup rule: 3 copies, 2 different media (local SSD staging + USB stick), 1 offsite (cloud or remote server).
 
-The offsite sync runs automatically after each successful USB commit. It is non-fatal — if the remote is unreachable, the USB backup is always intact and you receive an alert. No data is ever lost due to an offsite failure.
+The offsite sync runs automatically after each successful USB commit. It is non-fatal — if the remote is unreachable, the USB backup is always intact and you receive an alert.
 
 ---
 
@@ -60,7 +60,7 @@ RCLONE_EXTRA_OPTS="--bwlimit 5M"    # optional: cap upload speed
 
 ## Retention
 
-Without retention limits the remote grows indefinitely. Configure limits to fit within free-tier storage or cap costs.
+Without limits the remote grows indefinitely. Configure limits to fit within free-tier storage or cap costs.
 
 ```bash
 RCLONE_KEEP_MIN=1           # never delete below this many offsite copies
@@ -68,19 +68,17 @@ RCLONE_KEEP_MAX=4           # prune oldest when count exceeds this
 RCLONE_MAX_STORAGE_GB=0     # hard storage cap in GB (0 = unlimited)
 ```
 
-**How pruning works:**
-
-After each successful upload, PABS lists all backup directories on the remote. If count exceeds `RCLONE_KEEP_MAX`, oldest backups are marked for deletion. If total usage exceeds `RCLONE_MAX_STORAGE_GB`, more are marked. `RCLONE_KEEP_MIN` is applied as a final safety gate — PABS never deletes the last N copies regardless of other limits.
+After each successful upload, PABS lists all backup directories on the remote. If count exceeds `RCLONE_KEEP_MAX`, the oldest backups are marked for deletion. If total usage exceeds `RCLONE_MAX_STORAGE_GB`, more are marked. `RCLONE_KEEP_MIN` is applied as a final safety gate — PABS never deletes the last N copies regardless of other limits.
 
 **Free-tier sizing:**
 
 ```bash
-# Google Drive (15 GB free) — leave 1 GB headroom
+# Google Drive (15 GB free)
 RCLONE_KEEP_MIN=1
 RCLONE_KEEP_MAX=4
 RCLONE_MAX_STORAGE_GB=14
 
-# OneDrive (5 GB free) — leave 1 GB headroom
+# OneDrive (5 GB free)
 RCLONE_KEEP_MIN=1
 RCLONE_KEEP_MAX=2
 RCLONE_MAX_STORAGE_GB=4
@@ -111,11 +109,9 @@ rclone's `password2` — a second passphrase that prevents rainbow-table attacks
 
 ### Keeping the passphrase safe
 
-The encryption password is the only thing that can decrypt your offsite data.
-
-- Store it in a password manager (Bitwarden, 1Password, KeePass, etc.), separately from the USB stick
-- PABS automatically redacts it from the `config.sh` copy written to USB, so it does not travel with the local backup
-- The `DISASTER-RECOVERY.md` generated inside each backup contains the exact `rclone config create` command needed to reconstruct the crypt remote at restore time
+- Store it in a password manager (Bitwarden, 1Password, KeePass), separately from the USB stick.
+- PABS automatically redacts it from the `config.sh` copy written to USB.
+- The `DISASTER-RECOVERY.md` generated inside each backup contains the exact `rclone config create` command needed to reconstruct the crypt remote at restore time.
 
 ### Verifying encryption is active
 
@@ -125,12 +121,11 @@ After a backup with encryption enabled:
 rclone lsf gdrive:proxmox-backup
 ```
 
-You should see only encrypted filenames (random-looking strings), not date-formatted directory names. Readable names mean encryption is not active.
+You should see only encrypted filenames — random-looking strings, not date-formatted directory names. Readable names mean encryption is not active.
 
 Access and verify the encrypted data directly:
 
 ```bash
-# Re-create the crypt remote manually
 rclone config create pabs_crypt_runtime crypt \
     remote                    "gdrive:proxmox-backup" \
     filename_encryption       standard \
@@ -138,17 +133,16 @@ rclone config create pabs_crypt_runtime crypt \
     password                  "$(rclone obscure 'your passphrase')" \
     password2                 "$(rclone obscure 'your salt')"   # omit if no salt
 
-# List through the crypt layer — should show date-formatted directory names
-rclone lsf pabs_crypt_runtime:
+rclone lsf pabs_crypt_runtime:    # should show date-formatted directory names
 ```
 
 ---
 
 ## OAuth token refresh (Google Drive / OneDrive)
 
-OAuth tokens can expire or be revoked if the account password changes, the token hasn't been used for an extended period, or the provider revokes it for security reasons.
+OAuth tokens can expire if the account password changes, the token has not been used for an extended period, or the provider revokes it for security reasons.
 
-rclone handles token refresh automatically using the refresh token stored in its config file. On a headless Proxmox server this works silently. If a token does expire, the offsite sync fails and you receive an alert. To re-authenticate:
+rclone handles token refresh automatically using the refresh token in its config file. If a token does expire, the offsite sync fails and you receive an alert. To re-authenticate:
 
 ```bash
 rclone config reconnect gdrive:    # or onedrive:
@@ -162,14 +156,14 @@ To avoid token expiry entirely: Backblaze B2, Wasabi, and SFTP-based remotes use
 
 ---
 
-## What is and isn't synced
+## What is and is not synced
 
 **Synced:** the final backup directory (`BACKUP_ROOT/<date>/`) — all PABS-staged data: Proxmox configs, VM/CT definitions, system state, VM agent bundles, the restore script, the DR playbook, and the SHA256 manifest.
 
 **Not synced:**
 
-- `backup.log` — the persistent log lives one level above per-backup directories and is not included
-- Old backup directories after pruning — PABS syncs only the new backup, then prunes old ones from the remote separately
+- `backup.log` — the persistent log lives one level above per-backup directories.
+- Old backup directories after pruning — PABS syncs only the new backup, then prunes old ones from the remote separately.
 
 ---
 
@@ -179,4 +173,4 @@ To avoid token expiry entirely: Backblaze B2, Wasabi, and SFTP-based remotes use
 /opt/pabs/pabs-status.sh
 ```
 
-The offsite section reports: encryption on/off, retention policy, remote reachability, number of remote backups and total GB used, and warnings if below `RCLONE_KEEP_MIN` or over `RCLONE_MAX_STORAGE_GB`.
+The offsite section reports: encryption status, retention policy, remote reachability, number of remote backups, total GB used, and warnings if below `RCLONE_KEEP_MIN` or over `RCLONE_MAX_STORAGE_GB`.

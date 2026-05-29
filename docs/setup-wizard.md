@@ -11,10 +11,10 @@ sudo bash /opt/pabs/setup.sh
 ## Usage
 
 ```bash
-# Full wizard — all 7 steps in order
+# Full wizard — all steps in order
 sudo bash /opt/pabs/setup.sh
 
-# Jump directly to one step (all others skipped)
+# Jump directly to one step
 sudo bash /opt/pabs/setup.sh --step usb
 sudo bash /opt/pabs/setup.sh --step notifications
 sudo bash /opt/pabs/setup.sh --step agents
@@ -22,7 +22,7 @@ sudo bash /opt/pabs/setup.sh --step offsite
 sudo bash /opt/pabs/setup.sh --step cron
 sudo bash /opt/pabs/setup.sh --step run
 
-# Non-interactive mode — accept all defaults (CI/automation)
+# Non-interactive — accept all defaults (CI / automation)
 sudo bash /opt/pabs/setup.sh --yes
 ```
 
@@ -32,13 +32,13 @@ Available steps: `deps` | `usb` | `notifications` | `agents` | `offsite` | `cron
 
 ## What each step does
 
-The wizard is an orchestrator. It sources modular step files and writes to `config.sh` exclusively through `setup/config_editor.sh`. It never modifies library or agent code. Every change can be reviewed in `config.sh` afterwards.
+The wizard sources modular step files and writes to `config.sh` exclusively through `setup/config_editor.sh`. It never modifies library or agent code. Every change is visible in `config.sh` afterwards.
 
 ### Step 1 — Dependencies (`deps`)
 
 Checks for required binaries: `rsync`, `zstd`, `tar`, `gzip`, `curl`, `python3`, `ssh`. Offers to install any missing via `apt`. Also checks optional packages:
 
-- `rclone` — needed only for offsite sync; `n` is the default prompt answer
+- `rclone` — needed only for offsite sync; `n` is the default answer
 - `mailutils` — needed only for email failure alerts; `n` is the default
 
 ### Step 2 — USB backup target (`usb`)
@@ -46,25 +46,25 @@ Checks for required binaries: `rsync`, `zstd`, `tar`, `gzip`, `curl`, `python3`,
 Displays `lsblk` output to help identify the device, then configures:
 
 - **USB mount point** — defaults to `/mnt/backup-usb`, creates the directory if absent
-- **UUID** — auto-detected if the drive is already mounted; offers to mount a device for you if not. UUID targeting prevents PABS from writing to the wrong drive.
-- **fstab entry** — optionally adds an auto-mount entry to `/etc/fstab` with the correct filesystem type detected automatically
+- **UUID** — auto-detected if the drive is already mounted; offers to mount a device if not. UUID targeting prevents PABS from writing to the wrong drive.
+- **fstab entry** — optionally adds an auto-mount entry to `/etc/fstab`
 - **`KEEP_BACKUPS`** — how many weekly backups to retain before rotating
-- **`LOCAL_STAGE_BASE`** — staging directory on local disk. Warns if root partition is small and suggests ZFS or Proxmox directory storage alternatives automatically
+- **`LOCAL_STAGE_BASE`** — staging directory on local disk. Warns if the root partition is small and suggests ZFS or Proxmox directory storage alternatives
 
 ### Step 3 — Notifications (`notifications`)
 
-- **Discord** — prompts for a webhook URL and sends a live test message before saving. Reports the HTTP status code.
+- **Discord** — prompts for a webhook URL and sends a live test message before saving.
 - **Email** — shown only if `mail` or `sendmail` is installed. Optionally sends a test email.
 
 Both are optional and `n`-by-default.
 
 ### Step 4 — VM / LXC agents (`agents`)
 
-Handles SSH key setup and VM deployment in sequence:
+Handles SSH key setup and VM deployment:
 
-**1. SSH key** — checks for an existing dedicated key at `/root/.ssh/id_ed25519_pabs_agent`, offers to reuse or generate a new one. Sets `VM_SSH_KEY` in `config.sh`.
+**1. SSH key** — checks for an existing dedicated key at `/root/.ssh/id_ed25519_pabs_agent`, offers to reuse or generate a new one.
 
-**2. Per-VM loop** — for each VM you want to add, asks for IP, SSH user, and label, then presents a type selector:
+**2. Per-VM loop** — for each VM, asks for IP, SSH user, and label, then presents a type selector:
 
 | Choice | Type | Extra questions |
 | :----- | :--- | :-------------- |
@@ -74,7 +74,7 @@ Handles SSH key setup and VM deployment in sequence:
 | 4 | Generic | Extra paths to include |
 | 5 | Auto-detect | No extra questions |
 
-All answers are passed as `--set` flags to `install-agent.sh`. No SSH into the VM is required afterwards. On success, the VM entry is appended to `VM_AGENTS` in `config.sh` automatically.
+All answers are passed as `--set` flags to `install-agent.sh`. On success, the VM entry is appended to `VM_AGENTS` in `config.sh` automatically.
 
 **3. Parallelism** — if more than one agent is configured, asks for `VM_AGENT_MAX_PARALLEL`.
 
@@ -90,14 +90,14 @@ Provider selection with free-tier sizes shown. Sets smart retention defaults per
 
 Also handles:
 
-- **rclone remote verification** — checks if the remote is already configured in rclone's config, and offers to open `rclone config` inline if not. Includes instructions for headless OAuth setup.
-- **Connectivity test** — verifies the remote is reachable before saving, creates the remote path.
+- **rclone remote verification** — checks if the remote is configured, offers to open `rclone config` inline if not. Includes instructions for headless OAuth setup.
+- **Connectivity test** — verifies the remote is reachable before saving.
 - **Bandwidth limit** — sets `RCLONE_EXTRA_OPTS` (default: `--bwlimit 5M`).
-- **Encryption** — asks for a passphrase, confirms it, optionally asks for a salt. Shows a warning to store the passphrase safely before proceeding. Both values are redacted from the `config.sh` copy written to USB.
+- **Encryption** — asks for a passphrase, confirms it, optionally asks for a salt. Shows a warning to store the passphrase before proceeding. Both values are redacted from the `config.sh` copy written to USB.
 
 ### Step 6 — Cron schedule (`cron`)
 
-Four presets plus a custom expression option. Writes to root's crontab, removing any existing PABS entry first. Verifies the entry is present after writing.
+Four presets plus a custom expression option. Writes to root's crontab, removing any existing PABS entry first.
 
 | Preset | Expression | Schedule |
 | :----- | :--------- | :------- |
@@ -119,7 +119,7 @@ Shows a configuration summary table, runs `pabs-status.sh` as a pre-flight check
 
 ## Re-running the wizard
 
-The wizard reads existing values before asking questions. If a value is already configured, it shows the current value and asks whether to update it. Selecting no preserves the existing value and moves on.
+The wizard reads existing values before prompting. If a value is already configured, it shows the current value and asks whether to update it.
 
 Common re-run scenarios:
 
@@ -127,7 +127,7 @@ Common re-run scenarios:
 # Add a new VM agent
 sudo bash /opt/pabs/setup.sh --step agents
 
-# Update offsite encryption password
+# Update the offsite encryption password
 sudo bash /opt/pabs/setup.sh --step offsite
 
 # Change the backup schedule
@@ -141,7 +141,7 @@ sudo bash /opt/pabs/setup.sh --step run
 
 ## Non-interactive mode (`--yes`)
 
-Accepts all defaults without prompting. Intended for automated testing or scripted re-deployments. Secrets (`RCLONE_ENCRYPTION_PASSWORD`, `HAOS_BACKUP_PASSWORD`) are never auto-filled in `--yes` mode — set them via `--step offsite` interactively or write to `config.sh` directly.
+Accepts all defaults without prompting. Intended for automated testing or scripted re-deployments. Secrets (`RCLONE_ENCRYPTION_PASSWORD`, `HAOS_BACKUP_PASSWORD`) are never auto-filled in `--yes` mode — set them interactively or write to `config.sh` directly.
 
 ```bash
 sudo bash /opt/pabs/setup.sh --yes
@@ -151,10 +151,10 @@ sudo bash /opt/pabs/setup.sh --yes
 
 ## File structure
 
-`setup.sh` is a thin orchestrator (~120 lines). Each step is isolated in its own file, making them independently readable and testable.
+`setup.sh` is a thin orchestrator (~120 lines). Each step is isolated in its own file.
 
 ```
-setup.sh                    Orchestrator: args, preflight, module loading, final summary
+setup.sh
 setup/
 ├── ui.sh                   Terminal output helpers (_ok, _warn, _ask, _ask_yn, ...)
 ├── config_editor.sh        config.sh read/write (_cfg_get, _cfg_set, _cfg_set_raw, ...)
@@ -175,21 +175,22 @@ Terminal primitives shared across every step. Color detection is automatic (disa
 
 ### `setup/config_editor.sh`
 
-All `config.sh` read/write operations. Adding a new config key to the wizard means calling these functions — no raw `sed` in step files:
+All `config.sh` read/write operations. Step files call these functions — no raw `sed` in step files:
 
-| Function | Behavior |
-| :------- | :------- |
+| Function | Behaviour |
+| :------- | :-------- |
 | `_cfg_get KEY` | Reads the active (uncommented) value; returns empty if missing or commented out |
-| `_cfg_set KEY VALUE` | Sets a quoted string value; replaces active assignment, uncomments a commented key, or appends before the internal vars sentinel |
-| `_cfg_set_raw KEY VALUE` | Like `_cfg_set` but without quotes (for integers, booleans) |
+| `_cfg_set KEY VALUE` | Sets a quoted string value; replaces an active assignment, uncomments a commented key, or appends before the internal vars sentinel |
+| `_cfg_set_raw KEY VALUE` | Like `_cfg_set` but without quotes — for integers and booleans |
 | `_cfg_append_vm_agent ENTRY` | Appends one agent entry to `VM_AGENTS`, handling both empty and populated array cases |
 
-### Agent type modules in `agents.sh`
+### Adding a new agent type
 
-Each VM type's configuration questions are isolated in a dedicated function using Bash namerefs. Adding a new agent type requires only one function and one `case` branch:
+Each VM type's configuration questions are isolated in a dedicated function using Bash namerefs. Adding a new type requires one function and one `case` branch:
 
 ```bash
 _agent_type_mytype() {
+    # shellcheck disable=SC2178
     local -n _flags=$1          # nameref to caller's set_flags array
     _flags+=(--set "PABS_TYPE=mytype")
     local myval

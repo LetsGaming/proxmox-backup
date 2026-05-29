@@ -16,11 +16,11 @@ Run the health check before relying on a backup:
 sudo bash /opt/pabs/pabs-status.sh
 ```
 
-Check the `--- USB Drive Health ---` section. If it reports kernel I/O errors or a forced read-only remount, use the offsite copy instead, or use a backup predating the errors. See [`docs/usb-health.md`](usb-health.md) for signal interpretation.
+Check the `--- USB Drive Health ---` section. If it reports kernel I/O errors or a forced read-only remount, use the offsite copy instead, or use a backup predating the errors. See [docs/usb-health.md](usb-health.md) for signal interpretation.
 
 ### Verify integrity
 
-Always verify the SHA256 manifest before restoring anything:
+Always verify the SHA256 manifest before restoring:
 
 ```bash
 cd /mnt/backup-usb/proxmox-backup/<date>/
@@ -38,7 +38,7 @@ ls /mnt/backup-usb/proxmox-backup/
 # 2026-05-25_03-00-00/   ← most recent
 ```
 
-Use the most recent backup unless the corruption you're recovering from was present in the latest run — in that case use an older one.
+Use the most recent backup unless the issue you are recovering from was introduced in the latest run — in that case use an older one.
 
 ---
 
@@ -60,7 +60,7 @@ chmod +x proxmox-restore.sh
 ./proxmox-restore.sh
 ```
 
-The script prompts before each section. Skip anything you don't need.
+The script prompts before each section. Skip anything you do not need.
 
 ### Target a single section
 
@@ -75,7 +75,7 @@ The script prompts before each section. Skip anything you don't need.
 ./proxmox-restore.sh --section vm-agents  # VM application bundles
 ```
 
-### Dry-run mode (preview only, no changes)
+### Dry-run mode
 
 ```bash
 ./proxmox-restore.sh --dry-run
@@ -88,11 +88,11 @@ The script prompts before each section. Skip anything you don't need.
 
 Use this after total hardware failure: new hardware, fresh Proxmox install, restore everything.
 
-Follow `DISASTER-RECOVERY.md` inside the backup folder first — it is generated at backup time with your exact hostname, Proxmox version, disk layout, and VM list. The steps below are a summary.
+Open `DISASTER-RECOVERY.md` inside the backup folder first — it is generated at backup time with your exact hostname, Proxmox version, disk layout, and VM list.
 
 ### Phase 1 — Install Proxmox
 
-Install the same Proxmox version as at backup time (recorded in `system-state/proxmox-version.txt`). Use the same hostname and IP where possible to minimise post-restore changes.
+Install the same Proxmox version as at backup time (recorded in `system-state/proxmox-version.txt`). Use the same hostname and IP where possible to minimise post-restore adjustments.
 
 ### Phase 2 — Restore Proxmox configs
 
@@ -100,16 +100,15 @@ Install the same Proxmox version as at backup time (recorded in `system-state/pr
 mount /dev/sdX1 /mnt/backup-usb
 cd /mnt/backup-usb/proxmox-backup/<date>/
 
-# Verify before touching anything
 sha256sum --check MANIFEST.sha256
 
 chmod +x proxmox-restore.sh
 ./proxmox-restore.sh
 ```
 
-**Restore order matters:**
+Restore order matters:
 
-1. `configs` — network, `/etc/pve/`, hosts. Do this first; reboot if network changes.
+1. `configs` — network, `/etc/pve/`, hosts. Reboot if network config changes.
 2. `ssh` — restore before trying to SSH in from another machine.
 3. `firewall` — restore after network is confirmed working.
 4. `cron` — restore after services are up.
@@ -123,10 +122,10 @@ chmod +x proxmox-restore.sh
 Do not extract `etc-pve.tar` wholesale onto a live Proxmox node — it can corrupt the cluster database. Restore individual files selectively:
 
 ```bash
-# Inspect
+# Inspect contents
 tar -tf etc-pve.tar
 
-# Restore a single file (e.g. storage config)
+# Restore a single file
 tar -C / -xf etc-pve.tar etc/pve/storage.cfg
 
 # Restore all firewall rules
@@ -135,7 +134,7 @@ tar -C / -xf etc-pve.tar --wildcards 'etc/pve/firewall/*'
 
 ### Phase 3 — Rebuild VMs
 
-VM disk images are not backed up — and not needed. Each agent bundle contains the full application state. Rebuild path for each VM:
+VM disk images are not backed up. Each agent bundle contains the full application state. Rebuild path for each VM:
 
 1. Create fresh VM/LXC in Proxmox (use `vm-ct-definitions/` for the specs)
 2. Install base OS
@@ -145,7 +144,7 @@ VM disk images are not backed up — and not needed. Each agent bundle contains 
 ### Phase 4 — Verify
 
 ```bash
-# Proxmox WebUI
+# Proxmox web UI
 https://<hostname>:8006
 
 # Network
@@ -169,35 +168,36 @@ Use this when the USB stick is lost, damaged, or unavailable.
 
 ### Prerequisites
 
-You need your `RCLONE_ENCRYPTION_PASSWORD` and `RCLONE_ENCRYPTION_SALT` (if set). Retrieve them from your password manager before proceeding. Without them, the offsite data cannot be decrypted.
+You need `RCLONE_ENCRYPTION_PASSWORD` and `RCLONE_ENCRYPTION_SALT` (if set). Retrieve them from your password manager before proceeding — without them the offsite data cannot be decrypted.
 
 ### Step 1 — Install rclone and configure the base remote
 
 ```bash
 apt install rclone
-rclone config   # re-configure the same remote as on the original host
+rclone config    # re-configure the same remote as on the original host
 ```
 
-### Step 2 — Re-create the encryption wrapper (if encryption was enabled)
+### Step 2 — Re-create the encryption wrapper
+
+Skip this step if encryption was not enabled.
 
 ```bash
 rclone config create pabs_crypt_runtime crypt \
-    remote                  "gdrive:proxmox-backup" \
-    filename_encryption     standard \
+    remote                    "gdrive:proxmox-backup" \
+    filename_encryption       standard \
     directory_name_encryption true \
-    password                "$(rclone obscure 'YOUR_MAIN_PASSWORD')" \
-    password2               "$(rclone obscure 'YOUR_SALT')"   # omit if no salt was set
+    password                  "$(rclone obscure 'YOUR_MAIN_PASSWORD')" \
+    password2                 "$(rclone obscure 'YOUR_SALT')"   # omit if no salt
 ```
 
-Access the data as `pabs_crypt_runtime:` going forward.
+Use `pabs_crypt_runtime:` as the remote going forward.
 
 ### Step 3 — Download the backup
 
 ```bash
 # List available backups
-rclone lsf pabs_crypt_runtime:    # encrypted remote
-# or without encryption:
-rclone lsf gdrive:proxmox-backup
+rclone lsf pabs_crypt_runtime:     # with encryption
+rclone lsf gdrive:proxmox-backup   # without encryption
 
 # Download a specific backup
 mkdir -p /mnt/restore
@@ -213,7 +213,7 @@ chmod +x proxmox-restore.sh
 ./proxmox-restore.sh
 ```
 
-From here, follow the same Phase 2–4 steps as [Scenario 2](#scenario-2----full-disaster-recovery-from-usb).
+From here, follow Phase 2–4 from [Scenario 2](#scenario-2----full-disaster-recovery-from-usb).
 
 ---
 
@@ -259,6 +259,7 @@ The bundle contains a native HA snapshot (`.tar`). Restore via:
 **HA UI:** Settings → System → Backups → ⋮ → Upload backup → select the `.tar` → Restore
 
 **CLI (SSH add-on):**
+
 ```bash
 ha backup restore <slug>
 ```
@@ -270,7 +271,7 @@ The slug is the filename without the `.tar` extension, visible in the HA UI afte
 ```bash
 cd /tmp/restore-my-vm
 
-# The restore-notes.txt contains the full procedure for this instance.
+# restore-notes.txt contains the full procedure for this instance.
 # General approach: stop the server, extract the archive, start.
 tar -I zstd -xf weekly-archives/survival-world-2026-05-25.tar.zst \
     -C /home/minecraft/minecraft-server/
@@ -281,10 +282,7 @@ tar -I zstd -xf weekly-archives/survival-world-2026-05-25.tar.zst \
 ```bash
 cd /tmp/restore-my-vm
 
-# Restore /etc/
 rsync -a etc/ /etc/
-
-# Restore scripts
 rsync -a usr/local/bin/ /usr/local/bin/
 
 # Restore packages (requires internet)
@@ -292,7 +290,7 @@ dpkg --set-selections < package-list.txt
 apt-get dselect-upgrade
 ```
 
-### Restore via the interactive script (`--section vm-agents`)
+### Restore via the interactive script
 
 The restore script handles VM bundle restore with prompts:
 

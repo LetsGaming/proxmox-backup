@@ -1,6 +1,6 @@
 # VM agent backups
 
-PABS backs up VMs and LXCs with a lightweight agent deployed once per guest. The agent auto-detects the VM type, collects only what's needed to restore, and produces a self-contained `.tar.zst` bundle that PABS pulls back to USB during the backup run.
+PABS backs up VMs and LXCs with a lightweight agent deployed once per guest. The agent auto-detects the VM type, collects only what is needed to restore, and produces a self-contained `.tar.zst` bundle that PABS pulls back to USB during the backup run.
 
 No disk images are involved. Each bundle includes a `restore-notes.txt` with type-specific instructions. This repository is not required at restore time.
 
@@ -8,11 +8,11 @@ No disk images are involved. Each bundle includes a `restore-notes.txt` with typ
 
 ## Supported types
 
-| Type | Detection | What's backed up |
-| :--- | :-------- | :--------------- |
+| Type | Detection | What is backed up |
+| :--- | :-------- | :---------------- |
 | `docker` | `docker` CLI present | All compose files + `.env` files, Docker daemon config, named volumes (under threshold), package list |
-| `haos` | `ha` CLI present + `/config/configuration.yaml` exists | Full native HA snapshot (`.tar`) via `ha` CLI — one-click restore in HA UI |
-| `minecraft` | `minecraft` system user, or `MINECRAFT_BASE` directory present | Weekly `.tar.zst` archives from `minecraft-server-setup`, server config files, mods/plugins |
+| `haos` | `ha` CLI present + `/config/configuration.yaml` exists | Full native HA snapshot (`.tar`) via `ha` CLI — one-click restore in the HA UI |
+| `minecraft` | `minecraft` system user, or `MINECRAFT_BASE` directory present | Weekly `.tar.zst` archives from [minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup), server config files, mods/plugins |
 | `generic` | everything else | `/etc/` (full), cron jobs, `/usr/local/bin/`, `/root/scripts/`, package list |
 
 Detection runs in the order above — first match wins. Override with `--set PABS_TYPE=<type>` during installation.
@@ -39,7 +39,7 @@ chmod +x /opt/pabs/install-agent.sh
 # Custom remote install path
 ./install-agent.sh root@192.168.1.10 --dir /home/backup/pabs-agent
 
-# Pass configuration values at install time
+# Pass configuration at install time
 ./install-agent.sh alice@192.168.1.40 \
     --set MINECRAFT_BASE=/home/alice/servers/backups \
     --set MINECRAFT_SERVER_BASE=/home/alice/servers \
@@ -65,15 +65,15 @@ VM_AGENTS=(
 /opt/pabs/backup.sh --dry-run
 ```
 
-Run a full backup and verify the bundles appear at `/mnt/backup-usb/proxmox-backup/<date>/vm-agents/<label>/`.
+Run a full backup and verify bundles appear at `/mnt/backup-usb/proxmox-backup/<date>/vm-agents/<label>/`.
 
 ---
 
 ## Configuring agents with `--set`
 
-All agent configuration is applied from the Proxmox host during installation via `--set KEY=VALUE` flags. No SSH into the VM to edit `/etc/pabs-agent/config` manually.
+All agent configuration is applied from the Proxmox host at install time via `--set KEY=VALUE` flags. No manual SSH into the VM required afterwards.
 
-`--set` can be repeated for multiple values:
+`--set` can be repeated:
 
 ```bash
 ./install-agent.sh root@192.168.1.10 \
@@ -82,7 +82,7 @@ All agent configuration is applied from the Proxmox host during installation via
     --set DOCKGE_STACKS_DIR=/opt/mystacks
 ```
 
-To update a setting after initial installation, re-run `install-agent.sh` with the new `--set` value. It overwrites the previous value in the config on the VM and updates the agent files to the latest version at the same time.
+To update a setting after initial installation, re-run `install-agent.sh` with the new `--set` value. It overwrites the previous value and updates the agent files to the latest version.
 
 ---
 
@@ -129,7 +129,7 @@ To update a setting after initial installation, re-run `install-agent.sh` with t
 
 ### Home Assistant OS (`types/haos.sh`)
 
-Must run inside the HAOS SSH add-on shell. Triggers a native HA snapshot via the `ha` CLI — the same format as HA's own backup system.
+Must run inside the HAOS SSH add-on shell. Triggers a native HA snapshot via the `ha` CLI.
 
 | Variable | Default | Description |
 | :------- | :------ | :---------- |
@@ -137,7 +137,7 @@ Must run inside the HAOS SSH add-on shell. Triggers a native HA snapshot via the
 | `HAOS_BACKUP_NAME` | `pabs-auto` | Prefix for the generated backup name (visible in HA UI) |
 | `HAOS_BACKUP_TYPE` | `full` | `full` or `partial` |
 | `HAOS_BACKUP_PASSWORD` | `""` | Encrypt the HA snapshot (leave empty for no encryption) |
-| `HAOS_WAIT_SECONDS` | `300` | Max seconds to wait for HA to finish creating the snapshot |
+| `HAOS_WAIT_SECONDS` | `300` | Max seconds to wait for HA to finish creating the snapshot. Must be greater than 0. |
 | `HAOS_POLL_INTERVAL` | `10` | How often to poll for snapshot completion (seconds) |
 | `HAOS_KEEP_ON_HOST` | `1` | How many `pabs-*` backups to keep on the HA host; oldest pruned after pull |
 | `HAOS_PARTIAL_ADDONS` | `""` | Comma-separated add-on slugs (partial backup only) |
@@ -164,14 +164,14 @@ Must run inside the HAOS SSH add-on shell. Triggers a native HA snapshot via the
 
 ### Minecraft (`types/minecraft.sh`)
 
-Designed to work with [minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup). The defaults match an unmodified install — only set these if you changed the username, install path, or backup path in `variables.json`.
+Designed to work with [minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup). Defaults match an unmodified install — only set these if you changed the username, install path, or backup path in `variables.json`.
 
 | Variable | Default | Description |
 | :------- | :------ | :---------- |
 | `MINECRAFT_BASE` | `/home/minecraft/minecraft-server/backups` | Parent directory containing per-instance backup folders |
 | `MINECRAFT_SERVER_BASE` | `/home/minecraft/minecraft-server` | Server root — used to capture `server.properties`, mods, plugins |
 | `MC_KEEP_WEEKLY` | `4` | How many weekly archives to include per instance |
-| `MC_KEEP_DAILY` | `0` | How many daily archives to include (0 = skip daily entirely) |
+| `MC_KEEP_DAILY` | `0` | How many daily archives to include (0 = skip dailies entirely) |
 | `MC_MIN_AGE_MINUTES` | `5` | Only include archives older than this — guards against in-progress compression |
 | `MC_INCLUDE_MODS` | `true` | Include the `mods/` directory from each server instance |
 | `MC_EXTRA_PATHS` | `""` | Space-separated extra paths to always include |
@@ -179,10 +179,10 @@ Designed to work with [minecraft-server-setup](https://github.com/LetsGaming/min
 **Examples:**
 
 ```bash
-# Default minecraft-server-setup install — no --set needed
+# Default minecraft-server-setup install — no --set flags needed
 ./install-agent.sh minecraft@192.168.1.40
 
-# Non-default username with default path structure
+# Non-default username
 ./install-agent.sh alice@192.168.1.40 \
     --set MINECRAFT_BASE=/home/alice/minecraft-server/backups \
     --set MINECRAFT_SERVER_BASE=/home/alice/minecraft-server
@@ -217,7 +217,7 @@ The agent detects common services that store data outside `/etc/` and logs a hin
 # Pi-hole — /etc/pihole/ is already under /etc/, no EXTRA_PATHS needed
 ./install-agent.sh root@192.168.1.30
 
-# AdGuard Home — data dir is outside /etc/
+# AdGuard Home — data directory is outside /etc/
 ./install-agent.sh root@192.168.1.31 \
     --set EXTRA_PATHS=/opt/AdGuardHome
 
@@ -225,7 +225,7 @@ The agent detects common services that store data outside `/etc/` and logs a hin
 ./install-agent.sh root@192.168.1.32 \
     --set EXTRA_PATHS=/opt/vaultwarden/data
 
-# Nextcloud (config only — not media files)
+# Nextcloud — config only, not media files
 ./install-agent.sh www-data@192.168.1.33 \
     --set EXTRA_PATHS=/var/www/nextcloud/config
 
@@ -238,9 +238,9 @@ The agent detects common services that store data outside `/etc/` and logs a hin
 
 ## SSH key management
 
-`install-agent.sh` registers each VM's SSH host key in `/root/.ssh/pabs_known_hosts` automatically. This file is used by `VM_AGENT_SSH_OPTS` in `config.sh` with `StrictHostKeyChecking=yes`, protecting against MITM attacks on the backup channel.
+`install-agent.sh` registers each VM's SSH host key in `/root/.ssh/pabs_known_hosts` automatically. This file is used by `VM_AGENT_SSH_OPTS` with `StrictHostKeyChecking=yes`, protecting against MITM attacks on the backup channel.
 
-If a VM's host key changes (e.g. after an OS reinstall), re-run `install-agent.sh` to update the registered key:
+If a VM's host key changes (e.g. after an OS reinstall), re-run `install-agent.sh`:
 
 ```bash
 ./install-agent.sh root@<vm-ip>
@@ -265,7 +265,7 @@ Re-run `install-agent.sh` after a PABS upgrade to push the latest agent code to 
 ./install-agent.sh root@<vm-ip>
 ```
 
-It rsyncs the latest agent files and re-applies any `--set` values you pass. The agent version is recorded in `agent-meta.txt` inside each bundle, so you can verify which version produced a given backup.
+It rsyncs the latest agent files and re-applies any `--set` values you pass. The agent version is recorded in `agent-meta.txt` inside each bundle.
 
 ---
 
@@ -281,11 +281,13 @@ system-state/           OS info, package list, hostname
 ```
 
 Inspect without extracting:
+
 ```bash
 tar -I zstd -tf vm-agents/my-vm/pabs-bundle-my-vm-<date>.tar.zst
 ```
 
 Read restore notes:
+
 ```bash
 tar -I zstd -xOf vm-agents/my-vm/pabs-bundle-my-vm-<date>.tar.zst restore-notes.txt
 ```

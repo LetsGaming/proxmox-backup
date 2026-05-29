@@ -6,32 +6,32 @@
 sudo bash /opt/pabs/pabs-status.sh
 ```
 
-The health section appears under `--- USB Drive Health ---`.
+Health output appears under `--- USB Drive Health ---`.
 
 ---
 
 ## Filesystem requirements
 
-PABS requires **ext4** on the USB drive. This is enforced by the setup wizard, which offers to format the drive before first use.
+PABS requires **ext4** on the USB drive. The setup wizard offers to format the drive before first use.
 
 | Filesystem | Supported | Reason |
 | :--------- | :-------- | :----- |
 | ext4       | ✓ Yes     | Full support: symlinks, Unix permissions, health checks |
-| ext3       | ✓ Yes     | Supported, but ext4 is preferred for newer features |
+| ext3       | ✓ Yes     | Supported, but ext4 is preferred |
 | ext2       | ⚠ Partial | No journalling — power loss during write can corrupt the filesystem |
 | exFAT      | ✗ No      | No symlink support, no Unix permissions — rsync transfer will fail |
-| FAT32      | ✗ No      | Same limitations as exFAT, plus 4 GB file size limit |
+| FAT32      | ✗ No      | Same as exFAT, plus 4 GB file size limit |
 | NTFS       | ✗ No      | Requires `ntfs-3g`; no reliable symlink support in practice |
 
-**Why symlinks matter:** the staging tree contains symlinks captured from `/etc/pve` (pmxcfs FUSE artefacts) and `/root/.ssh/authorized_keys`. These need to be stored faithfully on the USB so the restore script and manifest verification work correctly. exFAT and FAT32 cannot store symlinks at all — rsync exits with an error when it tries to create them.
+**Why symlinks matter:** the staging tree contains symlinks captured from `/etc/pve` (pmxcfs FUSE artefacts) and `/root/.ssh/authorized_keys`. These must be stored faithfully on the USB so manifest verification and the restore script work correctly. exFAT and FAT32 cannot store symlinks at all — rsync exits with an error when it tries to create them.
 
 **Why Unix permissions matter:** the `MANIFEST.sha256` verification, SSH key restore (`chmod 700`/`600`), and crontab restore all depend on preserved ownership and mode bits. FAT-family filesystems have no concept of these.
 
-**Why health checks need ext4:** Signal 3 of the USB health check reads the ext4 superblock error counter via `dumpe2fs`. This is the most reliable early-warning indicator of flash wear on USB sticks. It is silently skipped on non-ext filesystems, reducing visibility into drive health.
+**Why health checks need ext4:** Signal 3 reads the ext4 superblock error counter via `dumpe2fs`. This is the most reliable early-warning indicator of flash wear. It is silently skipped on non-ext filesystems.
 
 ### Formatting a drive as ext4
 
-Run the setup wizard — it will offer to format before mounting:
+Run the setup wizard — it offers to format before mounting:
 
 ```bash
 bash /opt/pabs/setup.sh --step usb
@@ -41,18 +41,18 @@ Or format manually:
 
 ```bash
 # WARNING: erases all data on the partition
-umount /dev/sdX1                                   # unmount first if mounted
-mkfs.ext4 -L PABS-BACKUP -m 0 /dev/sdX1           # -m 0: no reserved blocks (backup drive, not OS)
-tune2fs -c 0 -i 0 /dev/sdX1                       # disable automatic fsck by mount count
+umount /dev/sdX1
+mkfs.ext4 -L PABS-BACKUP -m 0 /dev/sdX1      # -m 0: no reserved blocks (backup drive, not OS)
+tune2fs -c 0 -i 0 /dev/sdX1                  # disable automatic fsck by mount count
 ```
 
-After formatting, re-run `setup.sh --step usb` to update the UUID and fstab entry, since both change after a format.
+After formatting, re-run `setup.sh --step usb` to update the UUID and fstab entry.
 
 ---
 
 ## What is checked
 
-Four independent signal layers are checked. Each produces its own pass/warn/fail result. A final verdict summarises how many layers failed.
+Four independent signal layers are checked. Each produces its own pass/warn/fail result.
 
 ### Signal 1 — Kernel I/O error log
 
@@ -70,17 +70,17 @@ Any hit is a strong indicator of hardware failure and is reported as a hard fail
 
 ### Signal 2 — Read-only remount detection
 
-When the kernel detects unrecoverable write errors, it force-remounts the filesystem read-only as a last-ditch safety measure. PABS detects this by checking `/proc/mounts` for the `ro` flag on the USB mount point.
+When the kernel detects unrecoverable write errors, it force-remounts the filesystem read-only. PABS detects this by checking `/proc/mounts` for the `ro` flag on the USB mount point.
 
 If this has happened, backups cannot be written and the drive is effectively dead. Reported as a hard failure with an immediate "replace the drive" message.
 
 ### Signal 3 — Filesystem error counter (ext2/3/4 only)
 
-Reads the ext superblock via `dumpe2fs -h` (superblock only — fast, no full disk scan). The `FS Error count` field is incremented by the kernel's own `ext4_error()` handler whenever it detects corruption or I/O failures at the filesystem layer.
+Reads the ext superblock via `dumpe2fs -h` (superblock only — fast, no full disk scan). The `FS Error count` field is incremented by the kernel's `ext4_error()` handler whenever it detects corruption or I/O failures at the filesystem layer.
 
 Also reports: mount count since last `fsck`, maximum mount count threshold, and date of last filesystem check.
 
-Silently skipped for FAT/exFAT/NTFS filesystems, which are common on consumer USB sticks.
+Silently skipped for FAT/exFAT/NTFS filesystems.
 
 ### Signal 4 — SMART overall health
 
@@ -110,8 +110,6 @@ A single failing signal is a warning, not an emergency, because false positives 
 
 ## Why a health percentage is not shown
 
-A percentage like "drive health: 76%" is not shown because for USB storage there is no reliable number to compute.
-
 USB flash sticks track wear-level counters internally, but expose them through vendor-specific SMART attributes (e.g. 173, 177, 202) with non-standardised scales. Most consumer USB bridges either block SMART entirely or return fabricated zeros. A percentage derived from these would be meaningless or actively misleading.
 
 USB-attached HDDs have better-standardised SMART attributes, but USB bridge pass-through is unreliable enough that the result cannot be trusted. HDDs connected via SATA should use `smartd` for continuous monitoring instead.
@@ -123,6 +121,7 @@ What PABS checks — kernel I/O errors, forced read-only remounts, filesystem er
 ## Example output
 
 **Healthy drive:**
+
 ```
 --- USB Drive Health ---
   ✓  Device: /dev/sdb1 (disk: /dev/sdb)
@@ -135,6 +134,7 @@ What PABS checks — kernel I/O errors, forced read-only remounts, filesystem er
 ```
 
 **Drive with kernel errors:**
+
 ```
 --- USB Drive Health ---
   ✓  Device: /dev/sdb1 (disk: /dev/sdb)
@@ -151,6 +151,7 @@ What PABS checks — kernel I/O errors, forced read-only remounts, filesystem er
 ```
 
 **Unsupported SMART bridge (normal):**
+
 ```
   ✓  SMART: not supported by this USB bridge (normal for many USB sticks)
 ```
@@ -167,6 +168,7 @@ What PABS checks — kernel I/O errors, forced read-only remounts, filesystem er
 | `smartctl` | `smartmontools` | SMART health check |
 
 Install optional tools:
+
 ```bash
 apt install e2fsprogs smartmontools
 ```
@@ -177,7 +179,7 @@ Both are optional — their checks are skipped with an informational note if the
 
 ## Responding to health warnings
 
-**One failing signal** — run a backup immediately if one isn't recent. Verify offsite sync is configured and working. Plan to replace the drive within weeks.
+**One failing signal** — run a backup immediately if one is not recent. Verify offsite sync is working. Plan to replace the drive within weeks.
 
 **Two or more failing signals** — treat as urgent. Verify the most recent backup is intact (`sha256sum --check MANIFEST.sha256`). Procure a replacement drive. Do not wait for the next scheduled run.
 
