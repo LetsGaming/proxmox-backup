@@ -99,7 +99,9 @@ _trigger_backup() {
     result=$(_ha "${cmd_args[@]}") || die "ha backup new failed: $result"
 
     local slug
-    slug=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('slug') or d.get('data',{}).get('slug',''))" 2>/dev/null)
+    # python3 is not available in all HAOS add-on shells — extract slug with grep.
+    # Handles both {"slug":"abcd"} and {"result":"ok","data":{"slug":"abcd"}} formats.
+    slug=$(echo "$result" | grep -o '"slug":"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
 
     [[ -n "$slug" ]] || die "ha backup new did not return a slug. Output: $result"
 
@@ -128,20 +130,8 @@ _wait_for_backup() {
         list_json=$(_ha backup list 2>/dev/null) || true
 
         local found
-        found=$(echo "$list_json" | python3 -c '
-import json, sys
-slug = sys.argv[1]
-try:
-    data = json.load(sys.stdin)
-    # The API returns either a list directly or {"backups": [...]}
-    backups = data if isinstance(data, list) else data.get("backups", [])
-    for b in backups:
-        if b.get("slug") == slug:
-            print("found")
-            break
-except Exception:
-    pass
-' "$slug") || true
+        # grep for the slug in the JSON — no python3 needed
+        found=$(echo "$list_json" | grep -o ""slug":"${slug}"" | head -1)
 
         if [[ "$found" == "found" ]]; then
             log "  ✓ Backup '$slug' ready"
@@ -194,22 +184,14 @@ _prune_old_host_backups() {
 
     # Collect pabs-* backup slugs sorted by date (oldest first)
     local old_slugs
-    old_slugs=$(echo "$list_json" | python3 -c '
-import json, sys
-prefix = sys.argv[1]
-keep = int(sys.argv[2])
-try:
-    data = json.load(sys.stdin)
-    backups = data if isinstance(data, list) else data.get("backups", [])
-    pabs = [b for b in backups if b.get("name", "").startswith(prefix)]
-    # Sort by date ascending (oldest first)
-    pabs.sort(key=lambda b: b.get("date", ""))
-    to_remove = pabs[:-keep] if keep > 0 else pabs
-    for b in to_remove:
-        print(b["slug"])
-except Exception as e:
-    import sys; print(f"# error: {e}", file=sys.stderr)
-' "$HAOS_BACKUP_NAME" "$HAOS_KEEP_ON_HOST") || true
+    # Extract slugs of pabs-* backups oldest-first, no python3 needed.
+    # JSON backup objects have "slug" before "name" in HA's output.
+    old_slugs=$(echo "$list_json" \
+        | grep -o '"slug":"[^"]*","name":"[^"]*"' \
+        | grep ""name":"${HAOS_BACKUP_NAME}" \
+        | grep -o '"slug":"[^"]*"' \
+        | tr -d '"slug:' \
+        | head -n -"${HAOS_KEEP_ON_HOST:-1}") || true
 
     if [[ -z "$old_slugs" ]]; then
         log "  Nothing to prune"
@@ -274,7 +256,7 @@ NOTES:
 $([ "$HAOS_BACKUP_TYPE" == "partial" ] && echo "  - This is a PARTIAL backup (addons: $HAOS_PARTIAL_ADDONS / folders: $HAOS_PARTIAL_FOLDERS)")
 $([ "$HAOS_BACKUP_TYPE" == "full" ] && echo "  - Full backup includes: HA config, add-ons, SSL, share, media, local add-ons")
   - The snapshot was created with: ha backup new --name pabs-auto-... (native HAOS command)
-  - HAOS version at backup time: $(ha core info --raw-json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('version','unknown'))" 2>/dev/null || echo "unknown")
+  - HAOS version at backup time: $(ha core info --raw-json 2>/dev/null | grep -o '"version":"[^"]*"' | grep -o '"[^"]*"$' | tr -d '"' || echo "unknown")
 
 EOF
     log "  ✓ restore-notes.txt written"
