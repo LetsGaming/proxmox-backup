@@ -227,7 +227,6 @@ section_custom_scripts() {
             -e 's|\(NOTIFY_EMAIL=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
             -e 's|\(PORTAINER_TOKEN=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
             -e 's|\(RCLONE_ENCRYPTION_PASSWORD=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
-            -e 's|\(RCLONE_ENCRYPTION_SALT=\)"\([^"]\+\)"|\1"<REDACTED>"|g' \
             -e '/[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]\|[Ss][Ee][Cc][Rr][Ee][Tt]\|_TOKEN\|_KEY\|WEBHOOK/s|="\([^"]\{4,\}\)"|="<REDACTED>"|g' \
             "$config_src" > "$config_dest"
         chmod 600 "$config_dest"

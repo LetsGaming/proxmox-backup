@@ -37,7 +37,7 @@ _offsite_configure_retention() {
     local provider_choice="$1"
 
     _step "Offsite retention"
-    _info "Controls how many backup copies to keep on the remote."
+    _info "Controls how many backup archives to keep on the remote."
     _info "Minimum: always kept regardless of other limits."
     _info "Maximum: oldest deleted when exceeded (0 = no limit)."
     _info "Storage cap: oldest deleted to stay under limit in GB (0 = no limit)."
@@ -77,8 +77,10 @@ _offsite_configure_retention() {
 
 _offsite_configure_encryption() {
     _step "Encryption"
-    _info "Encrypts everything before upload — the cloud provider sees only opaque blobs."
-    _info "Filenames are encrypted too. Required to restore: store the passphrase safely."
+    _info "Each backup is uploaded as a single .tar.zst archive."
+    _info "When a passphrase is set, it is encrypted with GPG (AES-256) before upload."
+    _info "The cloud provider sees only an opaque .tar.zst.gpg blob."
+    _info "To restore: gpg -d <DATE>.tar.zst.gpg | tar --use-compress-program=zstd -xf -"
     echo ""
 
     local current_pw
@@ -90,7 +92,19 @@ _offsite_configure_encryption() {
 
     if ! _ask_yn "Enable encryption? (strongly recommended)" "y"; then
         _warn "Encryption disabled — your cloud provider can read your backup data"
+        _cfg_set "RCLONE_ENCRYPTION_PASSWORD" ""
         return
+    fi
+
+    # Ensure gpg is available
+    if ! command -v gpg &>/dev/null; then
+        _warn "gpg is not installed — required for encryption."
+        if _ask_yn "Install gnupg now?"; then
+            apt-get install -y gnupg && _ok "gnupg installed"
+        else
+            _warn "Encryption not configured — install gnupg and re-run: bash setup.sh --step offsite"
+            return
+        fi
     fi
 
     local pw pw2
@@ -109,12 +123,6 @@ _offsite_configure_encryption() {
 
     _cfg_set "RCLONE_ENCRYPTION_PASSWORD" "$pw"
     _ok "Encryption passphrase saved"
-
-    if _ask_yn "Add a second passphrase (salt)? Adds extra protection for short passwords." "n"; then
-        local salt
-        salt=$(_ask_secret "Salt passphrase")
-        [[ -n "$salt" ]] && _cfg_set "RCLONE_ENCRYPTION_SALT" "$salt" && _ok "Salt saved"
-    fi
 
     echo ""
     _warn "IMPORTANT: your passphrase is stored in config.sh on this host."
@@ -135,6 +143,8 @@ _step_offsite() {
     _info "  Copy 1  — local SSD staging (temporary, deleted after USB write)"
     _info "  Copy 2  — USB stick (primary restore target)"
     _info "  Copy 3  — cloud or remote server via rclone  ← this step"
+    _info ""
+    _info "Each backup run uploads one .tar.zst archive (optionally GPG-encrypted)."
     echo ""
 
     local current_remote
@@ -175,8 +185,8 @@ _step_offsite() {
         _info "For OAuth providers (Google Drive, OneDrive) on a headless server:"
         _info "  1. Run 'rclone config' and create a new remote named '${remote_name}'"
         _info "  2. When asked 'Use auto config?' choose 'n'"
-        _info "  3. Copy the URL shown and open it in a browser on another machine"
-        _info "  4. Authorise access, then paste the code back here"
+        _info "  3. Run the printed rclone authorize command on a machine with a browser"
+        _info "  4. Paste the resulting token back here"
         echo ""
         if _ask_yn "Open 'rclone config' now to set up the remote?"; then
             rclone config

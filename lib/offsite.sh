@@ -1,61 +1,36 @@
 #!/bin/bash
 # =============================================================================
-# lib/offsite.sh — Offsite sync: encryption wrapper, upload, retention pruning
+# lib/offsite.sh — Offsite sync: archive, encryption, upload, retention pruning
 #
 # Sourced by backup.sh after core.sh and config.sh.
 # Entry point: offsite_sync() — called once per backup run after USB commit.
 # Non-fatal: a remote failure never aborts a backup that is already on USB.
+#
+# Each backup is uploaded as a single compressed archive:
+#   <DATE>.tar.zst        (plain)
+#   <DATE>.tar.zst.gpg    (GPG-encrypted when RCLONE_ENCRYPTION_PASSWORD is set)
+#
+# This avoids rclone syncing a directory tree full of tiny files, eliminates
+# symlink/permission issues on cloud targets, and makes encryption trivial —
+# one file in, one file out.
 # =============================================================================
 
 # ---------------------------------------------------------------------------
-# _offsite_effective_remote REMOTE
-# Prints the rclone remote string to use for all subsequent rclone calls.
-# When RCLONE_ENCRYPTION_PASSWORD is set, creates an ephemeral crypt remote
-# on top of REMOTE and returns its name. Idempotent across runs.
-# ---------------------------------------------------------------------------
-_offsite_effective_remote() {
-    local base_remote="$1"
-
-    if [[ -z "${RCLONE_ENCRYPTION_PASSWORD:-}" ]]; then
-        echo "$base_remote"
-        return 0
-    fi
-
-    local crypt_name="pabs_crypt_runtime"
-
-    rclone config create "$crypt_name" crypt \
-        remote                  "$base_remote" \
-        filename_encryption     standard \
-        directory_name_encryption true \
-        password                "$(rclone obscure "$RCLONE_ENCRYPTION_PASSWORD")" \
-        password2               "$(rclone obscure "${RCLONE_ENCRYPTION_SALT:-}")" \
-        >/dev/null 2>&1 || {
-            log_err "Failed to configure rclone crypt remote — skipping offsite sync"
-            return 1
-        }
-
-    echo "${crypt_name}:"
-}
-
-# ---------------------------------------------------------------------------
 # _offsite_list_backups REMOTE_ROOT
-# Lists PABS backup directory names on the remote, sorted oldest-first.
-# Only matches our date-format names (YYYY-MM-DD_HH-MM-SS).
+# Lists PABS archive filenames on the remote, sorted oldest-first.
+# Matches <DATE>.tar.zst and <DATE>.tar.zst.gpg
 # ---------------------------------------------------------------------------
 _offsite_list_backups() {
     local remote_root="$1"
     rclone lsf "$remote_root" \
-        --dirs-only \
-        --format p \
+        --files-only \
         2>/dev/null \
-        | sed 's|/$||' \
-        | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$' \
+        | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.tar\.zst(\.gpg)?$' \
         | sort
 }
 
 # ---------------------------------------------------------------------------
 # _offsite_usage_gb REMOTE_ROOT
-# Returns total GB used by all PABS directories on the remote.
 # ---------------------------------------------------------------------------
 _offsite_usage_gb() {
     local remote_root="$1"
@@ -68,8 +43,6 @@ _offsite_usage_gb() {
 
 # ---------------------------------------------------------------------------
 # _offsite_prune REMOTE_ROOT
-# Deletes oldest remote backups to satisfy KEEP_MAX and MAX_STORAGE_GB,
-# but never drops below KEEP_MIN copies.
 # ---------------------------------------------------------------------------
 _offsite_prune() {
     local remote_root="$1"
@@ -82,11 +55,10 @@ _offsite_prune() {
     local count="${#remote_backups[@]}"
     [[ $count -eq 0 ]] && return 0
 
-    log "  Offsite: $count backup(s) on remote"
+    log "  Offsite: $count archive(s) on remote"
 
     local -a to_delete=()
 
-    # Pass 1 — count cap
     if [[ $keep_max -gt 0 && $count -gt $keep_max ]]; then
         local excess=$(( count - keep_max ))
         log "  Offsite: count $count > RCLONE_KEEP_MAX $keep_max — marking $excess for pruning"
@@ -95,7 +67,6 @@ _offsite_prune() {
         done
     fi
 
-    # Pass 2 — storage cap
     if [[ $max_gb -gt 0 ]]; then
         local used_gb
         used_gb=$(_offsite_usage_gb "$remote_root")
@@ -103,21 +74,16 @@ _offsite_prune() {
 
         if python3 -c "import sys; sys.exit(0 if float('$used_gb') > float('$max_gb') else 1)" 2>/dev/null; then
             log "  Offsite: storage cap exceeded — marking oldest for pruning"
-            # Track estimated remaining usage locally to avoid an rclone size RPC
-            # per iteration (slow and costly on paid remotes like Backblaze B2).
-            # We subtract a conservative 100MB per directory marked for deletion;
-            # the safety gate below ensures we never drop below KEEP_MIN.
             local estimated_gb="$used_gb"
-            for dir in "${remote_backups[@]}"; do
+            for f in "${remote_backups[@]}"; do
                 python3 -c "import sys; sys.exit(0 if float('$estimated_gb') > float('$max_gb') else 1)" 2>/dev/null \
                     || break
-                printf '%s\n' "${to_delete[@]+"${to_delete[@]}"}" | grep -qxF "$dir" \
-                    || { to_delete+=("$dir"); estimated_gb=$(python3 -c "print(round(float('$estimated_gb') - 0.1, 2))"); }
+                printf '%s\n' "${to_delete[@]+\"${to_delete[@]}\"}" | grep -qxF "$f" \
+                    || { to_delete+=("$f"); estimated_gb=$(python3 -c "print(round(float('$estimated_gb') - 0.1, 2))"); }
             done
         fi
     fi
 
-    # Safety gate — never prune below KEEP_MIN
     local survivors=$(( count - ${#to_delete[@]} ))
     while [[ $survivors -lt $keep_min && ${#to_delete[@]} -gt 0 ]]; do
         log "  Offsite: rescued ${to_delete[-1]} from pruning (RCLONE_KEEP_MIN=$keep_min)"
@@ -130,12 +96,12 @@ _offsite_prune() {
         return 0
     fi
 
-    for dir in "${to_delete[@]}"; do
-        log "  Offsite: pruning $dir"
-        if rclone purge "${remote_root}/${dir}" 2>>"$LOG"; then
-            log "  Offsite:   ✓ removed $dir"
+    for f in "${to_delete[@]}"; do
+        log "  Offsite: pruning $f"
+        if rclone deletefile "${remote_root}/${f}" 2>>"$LOG"; then
+            log "  Offsite:   ✓ removed $f"
         else
-            log_warn "Offsite: failed to remove $dir — will retry next run"
+            log_warn "Offsite: failed to remove $f — will retry next run"
         fi
     done
 }
@@ -152,9 +118,6 @@ offsite_sync() {
         return 0
     fi
 
-    local effective_remote
-    effective_remote=$(_offsite_effective_remote "$RCLONE_REMOTE") || return 0
-
     local encrypted="false"
     [[ -n "${RCLONE_ENCRYPTION_PASSWORD:-}" ]] && encrypted="true"
 
@@ -162,27 +125,72 @@ offsite_sync() {
     log "  Remote   : $RCLONE_REMOTE"
     log "  Encrypted: $encrypted"
 
-    # shellcheck disable=SC2206
-    # Intentional word-split so multiple flags (e.g. "--transfers 4 --checkers 8") are
-    # passed as separate argv elements. Callers must not put glob characters in
-    # RCLONE_EXTRA_OPTS (e.g. --filter='*.bak') as they would undergo filename expansion.
-    local -a extra_opts=($RCLONE_EXTRA_OPTS)
-    local dest
-    dest="${effective_remote%/}/$(basename "$FINAL_DIR")"
+    # --- Build archive in /tmp (fast local storage, not USB) ----------------
+    local archive_name="${DATE}.tar.zst"
+    local archive_tmp="/tmp/pabs-offsite-${DATE}.tar.zst"
+    local upload_file="$archive_tmp"
+    local upload_name="$archive_name"
 
-    if rclone sync "$FINAL_DIR" "$dest" \
+    log "  Compressing backup to archive..."
+    if ! tar -C "$(dirname "$FINAL_DIR")" \
+             --use-compress-program="zstd -3 -T0" \
+             -cf "$archive_tmp" \
+             "$(basename "$FINAL_DIR")" 2>>"$LOG"; then
+        log_err "Offsite: failed to create archive — skipping upload"
+        rm -f "$archive_tmp"
+        return 0
+    fi
+
+    local size_mb
+    size_mb=$(du -sm "$archive_tmp" 2>/dev/null | cut -f1)
+    log "  Archive ready: ${size_mb}MB"
+
+    # --- Optionally encrypt with GPG ----------------------------------------
+    if [[ "$encrypted" == "true" ]]; then
+        if ! command -v gpg &>/dev/null; then
+            log_warn "Offsite: RCLONE_ENCRYPTION_PASSWORD set but gpg not found — uploading unencrypted"
+            log_warn "  Install with: apt install gnupg"
+        else
+            local enc_tmp="${archive_tmp}.gpg"
+            log "  Encrypting archive..."
+            if echo "$RCLONE_ENCRYPTION_PASSWORD" | gpg --batch --yes \
+                    --passphrase-fd 0 \
+                    --symmetric \
+                    --cipher-algo AES256 \
+                    --output "$enc_tmp" \
+                    "$archive_tmp" 2>>"$LOG"; then
+                rm -f "$archive_tmp"
+                upload_file="$enc_tmp"
+                upload_name="${archive_name}.gpg"
+                log "  Encryption complete"
+            else
+                log_err "Offsite: gpg encryption failed — skipping upload"
+                rm -f "$archive_tmp" "$enc_tmp"
+                return 0
+            fi
+        fi
+    fi
+
+    # --- Upload single file via rclone --------------------------------------
+    local dest="${RCLONE_REMOTE%/}/${upload_name}"
+    local -a extra_opts=($RCLONE_EXTRA_OPTS)
+
+    log "  Uploading ${upload_name} to ${RCLONE_REMOTE}..."
+    if rclone copyto "$upload_file" "$dest" \
             "${extra_opts[@]}" \
-            --copy-links \
             --log-file="$LOG" \
             --log-level INFO \
             2>>"$LOG"; then
-        log "  ✓ Offsite upload complete"
+        log "  ✓ Offsite upload complete (${size_mb}MB)"
         dispatch_alert "SUCCESS — offsite sync $DATE complete to $RCLONE_REMOTE (encrypted: $encrypted)"
     else
         log_err "Offsite sync to $RCLONE_REMOTE failed — USB backup is intact"
         dispatch_alert "WARNING — offsite sync $DATE FAILED to $RCLONE_REMOTE. USB backup intact. Review: $LOG"
-        return 0  # non-fatal
+        rm -f "$upload_file"
+        return 0
     fi
 
-    _offsite_prune "${effective_remote}"
+    rm -f "$upload_file"
+
+    _offsite_prune "${RCLONE_REMOTE%/}"
 }

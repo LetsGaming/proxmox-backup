@@ -26,6 +26,13 @@ _step_deps() {
         optional_missing+=("rclone")
     fi
 
+    if command -v gpg &>/dev/null; then
+        _ok "gpg (offsite encryption)"
+    else
+        _warn "gnupg — not installed (needed for offsite encryption)"
+        optional_missing+=("gnupg")
+    fi
+
     if command -v mail &>/dev/null || command -v sendmail &>/dev/null; then
         _ok "mail / sendmail (email notifications)"
     else
@@ -54,6 +61,14 @@ _step_deps() {
                 apt-get install -y rclone
                 _ok "rclone installed"
                 optional_missing=("${optional_missing[@]/rclone}")
+            fi
+        fi
+
+        if [[ " ${optional_missing[*]} " == *" gnupg "* ]]; then
+            if _ask_yn "Install gnupg? (needed to encrypt offsite archives)" "n"; then
+                apt-get install -y gnupg
+                _ok "gnupg installed"
+                optional_missing=("${optional_missing[@]/gnupg}")
             fi
         fi
 

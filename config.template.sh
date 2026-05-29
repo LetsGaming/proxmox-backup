@@ -153,9 +153,8 @@ BACKUP_ZFS="true"
 #   RCLONE_REMOTE="backblaze:my-bucket/proxmox"  # Backblaze B2
 #   RCLONE_REMOTE="hetzner-sftp:backup/proxmox"  # any SFTP/S3-compatible remote
 #
-# Only the base remote is configured here. If RCLONE_ENCRYPTION_PASSWORD is set,
-# PABS automatically wraps this remote with rclone's crypt layer — no extra
-# rclone config steps required for encryption.
+# Only the base remote name is configured here. Encryption (if enabled) is
+# handled separately by PABS using GPG — no extra rclone config steps needed.
 #
 # Leave empty to disable offsite sync entirely.
 RCLONE_REMOTE=""
@@ -199,29 +198,23 @@ RCLONE_MAX_STORAGE_GB=0
 # -----------------------------------------------------------------------------
 # OFFSITE ENCRYPTION
 # -----------------------------------------------------------------------------
-# Encrypts all offsite data using rclone's built-in crypt remote. The crypt
-# layer is created automatically at runtime — no extra rclone config steps
-# needed. Your base remote (RCLONE_REMOTE) is configured once normally; PABS
-# wraps it transparently when a password is set.
+# When RCLONE_ENCRYPTION_PASSWORD is set, each backup archive is encrypted
+# with GPG (AES-256 symmetric) before upload. The cloud provider sees only an
+# opaque .tar.zst.gpg blob.
 #
-# This means you do not need to trust your cloud provider with your data.
-# The provider sees only opaque encrypted blobs — filenames are encrypted too.
+# Requires: apt install gnupg
 #
-# RCLONE_ENCRYPTION_PASSWORD — Main passphrase. Leave empty to disable encryption.
+# To decrypt and extract a backup manually:
+#   gpg -d <DATE>.tar.zst.gpg | tar --use-compress-program=zstd -xf -
+#
+# RCLONE_ENCRYPTION_PASSWORD — Passphrase. Leave empty to disable encryption.
 #                              Required to restore: store this passphrase safely
 #                              (e.g. in a password manager), separately from the
 #                              USB backup itself.
 #
-# RCLONE_ENCRYPTION_SALT     — Optional second passphrase (rclone "password2").
-#                              Protects against rainbow-table attacks on the main
-#                              password. Recommended if you use a short password.
-#                              Leave empty to skip (still secure with a strong
-#                              main password).
-#
-# ⚠  These values are automatically REDACTED in the config.sh copy written to
-#    USB, so they do not travel with the local backup.
+# ⚠  This value is automatically REDACTED in the config.sh copy written to
+#    USB, so it does not travel with the local backup.
 RCLONE_ENCRYPTION_PASSWORD=""
-RCLONE_ENCRYPTION_SALT=""
 
 # =============================================================================
 # INTERNAL VARS — do not edit below this line
