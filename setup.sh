@@ -85,11 +85,24 @@ _do_update() {
         echo ""
         echo "[PABS update] Changes:"
         git log --oneline "${old_rev}..${new_rev}" 2>/dev/null || true
-        echo ""
-        echo "[PABS update] Your config.sh was not modified."
-        echo "[PABS update] Check config.template.sh for any new variables and add them"
-        echo "             to config.sh if needed, or re-run: bash setup.sh --step deps"
     fi
+
+    echo ""
+
+    # Load UI + config helpers so _step_update can use _ok / _warn / _cfg_set_raw.
+    # These may not be sourced yet when --update is the only argument passed.
+    source "$SCRIPT_DIR/setup/ui.sh"
+    source "$SCRIPT_DIR/setup/config_editor.sh"
+    source "$SCRIPT_DIR/setup/steps/update.sh"
+
+    # Bootstrap config.sh from the template if this is somehow a first run
+    if [[ ! -f "$CONFIG" ]]; then
+        cp "$TEMPLATE" "$CONFIG"
+        chmod 600 "$CONFIG"
+        echo "[PABS update] Created config.sh from template (first run)"
+    fi
+
+    _step_update
 
     echo ""
     echo "[PABS update] Done."
