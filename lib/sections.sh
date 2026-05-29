@@ -288,10 +288,13 @@ section_vm_agents() {
                 "bash '$agent_path' --bundle-output '$remote_prefix'" 2>>"$LOG"
         ) || {
             local ssh_rc=$?
-            [[ $ssh_rc -eq 124 ]]                 && log "  ✗  [$label] Agent timed out after ${agent_timeout}s on $vm_host"                 || log "  ✗  [$label] Agent failed on $vm_host"
+            [[ $ssh_rc -eq 124 ]]                 && log "  ✗  [$label] Agent timed out after ${agent_timeout}s on $vm_host"                 || log "  ✗  [$label] Agent failed on $vm_host (exit ${ssh_rc})"
+            # Log any stdout the agent produced before dying — helps diagnose failures
+            if [[ -n "$agent_stdout" ]]; then
+                log "  [$label] Agent stdout before failure: $agent_stdout"
+            fi
             # Best-effort cleanup of any partial files matching the prefix
-            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host" \
-                "rm -f '${remote_prefix}'.*" 2>/dev/null || true
+            ssh "${ssh_opts[@]}" "$ssh_user@$vm_host"                 "rm -f '${remote_prefix}'.*" 2>/dev/null || true
             return 1
         }
 

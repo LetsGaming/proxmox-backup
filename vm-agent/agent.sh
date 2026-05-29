@@ -35,7 +35,7 @@
 #   EXTRA_PATHS="/opt/myapp" Extra paths to always include (generic + docker)
 # =============================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
 
 # Trap ERR to log the exact line that triggered set -e, making silent
 # failures visible in the PABS backup log. The trap fires before exit.
