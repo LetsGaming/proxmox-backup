@@ -136,7 +136,7 @@ To update a setting after initial installation, re-run `install-agent.sh` with t
 | `DOCKER_INCLUDE_VOLUMES` | `""` | Comma-separated named volumes to always include |
 | `DOCKER_VOLUME_AUTO_THRESHOLD_MB` | `5` | Auto-include volumes smaller than this many MB |
 | `DOCKER_SKIP_VOLUMES` | `false` | Set to `true` to skip all volume backups |
-| `DOCKER_EXTRA_PATHS` | `""` | Space-separated extra paths to always include |
+| `EXTRA_PATHS` | `""` | Space-separated extra paths to always include (universal — works across all agent types) |
 
 **Examples:**
 
@@ -256,7 +256,7 @@ Designed to work with [minecraft-server-setup](https://github.com/LetsGaming/min
 | `MC_KEEP_DAILY` | `0` | How many daily archives to include (0 = skip dailies entirely) |
 | `MC_MIN_AGE_MINUTES` | `5` | Only include archives older than this — guards against in-progress compression |
 | `MC_INCLUDE_MODS` | `true` | Include the `mods/` directory from each server instance |
-| `MC_EXTRA_PATHS` | `""` | Space-separated extra paths to always include |
+| `EXTRA_PATHS` | `""` | Space-separated extra paths to always include (universal — works across all agent types) |
 
 **Examples:**
 

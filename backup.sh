@@ -105,7 +105,6 @@ fi
 [[ "$DRY_RUN" == "true" ]] && log "======== DRY-RUN MODE — no writes will occur ========"
 acquire_lock
 
-log ""
 log "========================================"
 log "PABS backup started — $DATE"
 log "Version        : $SCRIPT_VERSION"

@@ -36,12 +36,12 @@
 #                           you have a specific reason.
 #   MC_MIN_AGE_MINUTES=5    Skip archives younger than this — guards against
 #                           pulling a file still being compressed.
-#   MC_EXTRA_PATHS=""       Space-separated extra paths to include.
+#   EXTRA_PATHS=""          Space-separated extra paths to include (universal — same variable across all types).
 #                           Use this for anything outside the archive:
-#                             MC_EXTRA_PATHS="/etc/systemd/system/survival.service"
+#                             EXTRA_PATHS="/etc/systemd/system/survival.service"
 #                           Add the api-server service if enabled:
-#                             MC_EXTRA_PATHS="/etc/systemd/system/survival.service \
-#                                             /etc/systemd/system/survival-api-server.service"
+#                             EXTRA_PATHS="/etc/systemd/system/survival.service \
+#                                          /etc/systemd/system/survival-api-server.service"
 # =============================================================================
 
 # --- Defaults (all match unmodified minecraft-server-setup) ---
@@ -49,7 +49,7 @@ MINECRAFT_BASE="${MINECRAFT_BASE:-/home/minecraft/minecraft-server/backups}"
 MC_KEEP_WEEKLY="${MC_KEEP_WEEKLY:-4}"
 MC_KEEP_DAILY="${MC_KEEP_DAILY:-0}"
 MC_MIN_AGE_MINUTES="${MC_MIN_AGE_MINUTES:-5}"
-MC_EXTRA_PATHS="${MC_EXTRA_PATHS:-}"
+MC_EXTRA_PATHS="${EXTRA_PATHS:-}"
 
 # Populated during run_backup, used by restore notes
 _mc_instances=()

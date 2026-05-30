@@ -32,7 +32,7 @@
 # each types/*.sh file can be set there. Common keys:
 #   PABS_TYPE="docker"       Force a specific type (skip detection)
 #   AGENT_LABEL="my-vm"      Human-readable label in restore notes
-#   EXTRA_PATHS="/opt/myapp" Extra paths to always include (generic + docker)
+#   EXTRA_PATHS="/opt/myapp" Extra paths to always include (all types — docker, generic, haos, minecraft)
 # =============================================================================
 
 set -Eeuo pipefail
@@ -288,9 +288,6 @@ EOF
 
 # Include the mods/ directory from each server instance
 # MC_INCLUDE_MODS="true"
-
-# Extra paths to always include (space-separated)
-# MC_EXTRA_PATHS="/home/minecraft/minecraft-server/shared-configs"
 EOF
             ;;
         generic)

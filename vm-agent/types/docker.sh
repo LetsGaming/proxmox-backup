@@ -31,7 +31,7 @@
 #   DOCKER_MANAGER="none|dockge|portainer|auto"  Override manager detection
 #   PORTAINER_URL="http://localhost:9000"
 #   PORTAINER_TOKEN="ptr_..."          Portainer API token (if using Portainer)
-#   DOCKER_EXTRA_PATHS="/opt/myapp/data /root/configs"  Extra paths to always include
+#   EXTRA_PATHS="/opt/myapp/data /root/configs"  Extra paths to always include (universal — same variable across all types)
 # =============================================================================
 
 # --- Defaults (all overridable via /etc/pabs-agent/config) ---
@@ -439,8 +439,8 @@ run_backup() {
     stage_path "/etc/docker/daemon.json" "Docker daemon config"
 
     # --- Extra paths (always included if configured) ---
-    if [[ -n "${DOCKER_EXTRA_PATHS:-}" ]]; then
-        for extra in $DOCKER_EXTRA_PATHS; do
+    if [[ -n "${EXTRA_PATHS:-}" ]]; then
+        for extra in $EXTRA_PATHS; do
             stage_path "$extra" "extra path: $extra"
             _notes+=("Extra path included: $extra")
         done
