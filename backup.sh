@@ -92,9 +92,20 @@ check_usb_mounted
 
 mkdir -p "$BACKUP_ROOT" "$LOCAL_STAGE_BASE"
 
+# Log rotation — when backup.log exceeds 2 MB, shift existing rotated logs
+# (.1 → .2 → ... → .5) and move the current log to .1. backup.log.5 is
+# discarded when a .6 would be created. Keeps up to 5 archived logs.
+if [[ -f "$LOG" ]] && [[ $(stat -c%s "$LOG" 2>/dev/null || echo 0) -gt 2097152 ]]; then
+    for i in 4 3 2 1; do
+        [[ -f "${LOG}.${i}" ]] && mv "${LOG}.${i}" "${LOG}.$((i+1))"
+    done
+    mv "$LOG" "${LOG}.1"
+fi
+
 [[ "$DRY_RUN" == "true" ]] && log "======== DRY-RUN MODE — no writes will occur ========"
 acquire_lock
 
+log ""
 log "========================================"
 log "PABS backup started — $DATE"
 log "Version        : $SCRIPT_VERSION"

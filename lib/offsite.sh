@@ -182,7 +182,6 @@ offsite_sync() {
             --log-level INFO \
             2>>"$LOG"; then
         log "  ✓ Offsite upload complete (${size_mb}MB)"
-        dispatch_alert "SUCCESS — offsite sync $DATE complete to $RCLONE_REMOTE (encrypted: $encrypted)"
     else
         log_err "Offsite sync to $RCLONE_REMOTE failed — USB backup is intact"
         dispatch_alert "WARNING — offsite sync $DATE FAILED to $RCLONE_REMOTE. USB backup intact. Review: $LOG"

@@ -71,7 +71,8 @@ section_proxmox_configs() {
     backup_path "/etc/hosts"                "Hosts file"
     backup_path "/etc/hostname"             "Hostname"
     backup_path "/etc/resolv.conf"          "DNS resolver config"
-    backup_path "/etc/apt/sources.list"     "APT sources.list"
+    # /etc/apt/sources.list is absent on Debian 12+ (everything is in sources.list.d)
+    [[ -e /etc/apt/sources.list ]] && backup_path "/etc/apt/sources.list" "APT sources.list"
     backup_path "/etc/apt/sources.list.d"   "APT sources.list.d"
 }
 
@@ -135,7 +136,8 @@ section_cron_jobs() {
 section_firewall() {
     log "[4/8] Firewall rules"
     backup_path "/etc/nftables.conf" "nftables rules"
-    backup_path "/etc/iptables"      "iptables rules"
+    # /etc/iptables is absent on systems using nftables — skip silently
+    [[ -e /etc/iptables ]] && backup_path "/etc/iptables" "iptables rules"
     backup_path "/etc/pve/firewall"  "Proxmox firewall rules"
 }
 
@@ -208,7 +210,8 @@ section_system_state() {
 section_custom_scripts() {
     log "[7/8] Custom scripts"
     backup_path "/usr/local/bin" "Custom scripts in /usr/local/bin"
-    backup_path "/root/scripts"  "Root scripts folder"
+    # /root/scripts is optional — skip silently if not present
+    [[ -e /root/scripts ]] && backup_path "/root/scripts" "Root scripts folder"
 
     # back up the backup script itself so it travels with the backup
     local pabs_root
